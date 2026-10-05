@@ -330,7 +330,7 @@
   let giphyTimer = null;
   let giphyOffset = 0;
   let giphyQuery = '';
-  let giphyLoading = false;
+  let giphyLoading = false, gifController=null, gifGeneration=0;
   const GIPHY_STORAGE_KEY = 'connections.giphy.apiKey';
   const MEDIA_API = 'https://cnx-gh-media.pixlcyd.workers.dev';
   const isGiphyUrl = value => typeof value === 'string' && /^https:\/\/(?:media\d*|i)\.giphy\.com\//i.test(value);
@@ -435,7 +435,7 @@
         const tile = event.target.closest('[data-gif-url]');
         if (!tile) return;
         try {
-          await sendGif({ url: tile.dataset.gifUrl, title: tile.dataset.gifTitle || 'GIF' });
+          await sendGif({ url: tile.dataset.gifUrl, title: tile.dataset.gifTitle || 'GIF',size:Number(tile.dataset.gifSize) });
           toggleGifPicker(false);
         } catch (error) { toast(error.message || 'Could not send GIF.'); }
       });
@@ -461,11 +461,12 @@
     browser.classList.toggle('hidden', !hasKey);
   }
 
+  let gifDestination=null;window.addEventListener('connections:open-space-gif',()=>toggleGifPicker(true));
   function toggleGifPicker(force) {
     ensureMessagingUi();
     const picker = $('v9-gif-picker');
-    if (!picker || state.view !== 'chat' || !state.activeId) return;
-    const opening = force ?? picker.classList.contains('hidden');
+    if(!picker)return;if(force!==false&&!(state.view==='chat'&&state.activeId)&&!rt.spaces.getActive())return;
+    const opening = force ?? picker.classList.contains('hidden');if(opening){gifDestination=state.view==='chat'?{kind:'dm',id:state.activeId,uid:state.user.uid}:{...rt.spaces.getActive(),uid:state.user.uid};const form=gifDestination.kind==='dm'?$('message-form'):$('space-message-form');form.prepend(picker);}
     picker.classList.toggle('hidden', !opening);
     $('v9-gif-button')?.classList.toggle('active', opening);
     if (!opening) return;
@@ -476,7 +477,10 @@
 
   async function loadGiphy(query = '', reset = false) {
     const key = getGiphyKey();
-    if (!key || giphyLoading) return;
+    if (!key || (giphyLoading && !reset)) return;
+    if(reset)gifController?.abort();
+    const generation=reset?++gifGeneration:gifGeneration;
+    const controller=new AbortController();gifController=controller;
     if (reset) { giphyOffset = 0; giphyQuery = query; }
     const grid = $('v9-gif-grid');
     if (!grid) return;
@@ -486,28 +490,33 @@
       const endpoint = query ? 'search' : 'trending';
       const params = new URLSearchParams({ api_key: key, limit: '24', offset: String(giphyOffset), rating: 'pg-13', lang: 'en' });
       if (query) params.set('q', query.slice(0, 50));
-      const response = await fetch(`https://api.giphy.com/v1/gifs/${endpoint}?${params}`);
+      const response = await fetch(`https://api.giphy.com/v1/gifs/${endpoint}?${params}`,{signal:controller.signal});
       const payload = await response.json();
+      if(generation!==gifGeneration || controller.signal.aborted)return;
       if (!response.ok || payload?.meta?.status >= 400) throw Error(payload?.meta?.msg || 'GIPHY search failed.');
       const tiles = (payload.data || []).map(item => {
         const preview = item.images?.fixed_width_small?.webp || item.images?.fixed_width?.webp || item.images?.fixed_height_small?.webp || item.images?.original?.url || '';
         const send = item.images?.original?.url || item.images?.downsized?.url || preview;
         if (!isGiphyUrl(preview) || !isGiphyUrl(send)) return '';
-        return `<button type="button" class="v9-gif-tile" data-gif-url="${escapeHtml(send)}" data-gif-title="${escapeHtml(item.title || 'GIF')}"><img src="${escapeHtml(preview)}" alt="${escapeHtml(item.title || 'GIF')}" loading="lazy"></button>`;
+        return `<button type="button" class="v9-gif-tile" data-gif-size="${Number(item.images?.original?.size)||0}" data-gif-url="${escapeHtml(send)}" data-gif-title="${escapeHtml(item.title || 'GIF')}"><img src="${escapeHtml(preview)}" alt="${escapeHtml(item.title || 'GIF')}" loading="lazy"></button>`;
       }).join('');
       if (reset) grid.innerHTML = tiles || '<div class="v9-gif-loading">No GIFs found.</div>';
       else grid.insertAdjacentHTML('beforeend', tiles);
       giphyOffset += (payload.data || []).length;
       $('v9-gif-more').classList.toggle('hidden', !(payload.pagination?.total_count > giphyOffset));
     } catch (error) {
+      if(error.name==="AbortError" || generation!==gifGeneration)return;
       if (reset) grid.innerHTML = `<div class="v9-gif-error">${escapeHtml(error.message || 'GIPHY unavailable.')}</div>`;
       toast(error.message || 'GIPHY unavailable.');
-    } finally { giphyLoading = false; }
+    } finally { if(generation===gifGeneration)giphyLoading = false; }
   }
 
   async function sendGif(gif) {
-    if (!state.activeId || !state.user?.uid || !isGiphyUrl(gif.url)) return;
-    await rt.experience.send('',{url:gif.url,name:String(gif.title||'GIPHY GIF').slice(0,100),type:'image/gif',size:1});
+    const target=gifDestination;if(!target||target.uid!==state.user?.uid||!isGiphyUrl(gif.url))throw Error('Choose the GIF again in the intended conversation.');
+    let size=gif.size;if(!size){const response=await fetch(gif.url,{method:'HEAD'});size=Number(response.headers.get('Content-Length'));}if(!Number.isInteger(size)||size<1)throw Error('GIF size is unavailable. Try another GIF.');
+    const media={url:gif.url,name:String(gif.title||'GIPHY GIF').slice(0,100),type:'image/gif',size};
+    if(target.kind==='dm')await rt.experience.send('',media,{connectionId:target.id});else await rt.spaces.send('',media,{target});
+
   }
 
   function previewForMessage(message) {
@@ -527,7 +536,7 @@
   function setComposerMode(mode) {
     ensureMessagingUi();
     toggleGifPicker(false);
-    composerMode = mode;
+    composerMode = mode?{...mode,connectionId:state.activeId}:null;
     const bar = $('v8-composer-mode');
     if (!bar) return;
     if (!mode) { bar.classList.add('hidden'); return; }
@@ -651,7 +660,7 @@
         actions.innerHTML = `<button type="button" data-msg-action="reply" title="Reply" aria-label="Reply">${actionIcon('reply')}</button><button type="button" data-msg-action="react" title="Add reaction" aria-label="Add reaction">${actionIcon('react')}</button><button type="button" data-msg-action="copy" title="Copy" aria-label="Copy">${actionIcon('copy')}</button>${own && message.text ? `<button type="button" data-msg-action="edit" title="Edit" aria-label="Edit">${actionIcon('edit')}</button>` : ''}${own ? `<button type="button" class="danger" data-msg-action="delete" title="Delete" aria-label="Delete">${actionIcon('delete')}</button>` : ''}`;
       }
 
-      if(!scheduled){actions.querySelectorAll('[data-msg-action]').forEach(b=>{if(!['reply','react'].includes(b.dataset.msgAction))b.classList.add('action-overflow')});const more=document.createElement('button');more.type='button';more.dataset.messageMore='1';more.setAttribute('aria-label','More message actions');more.innerHTML=window.__connectionsIcon('Ellipsis');actions.append(more);}
+      if(!scheduled){actions.querySelectorAll('[data-msg-action]').forEach(b=>{if(!['reply','react','copy','edit'].includes(b.dataset.msgAction))b.classList.add('action-overflow')});const more=document.createElement('button');more.type='button';more.dataset.messageMore='1';more.setAttribute('aria-label','More message actions');more.innerHTML=window.__connectionsIcon('Ellipsis');const forward=document.createElement('button');forward.type='button';forward.dataset.msgAction='forward';forward.title='Forward';forward.setAttribute('aria-label','Forward');forward.innerHTML=window.__connectionsIcon('Forward');actions.append(forward);actions.append(more);}
 
       let picker = body.querySelector('.v9-reaction-picker');
       if (!picker) { picker = document.createElement('div'); picker.className = 'v9-reaction-picker'; body.append(picker); }
@@ -667,11 +676,11 @@
 
   async function sendReply(text, mode) {
     if (!state.activeId || !state.user?.uid) return;
-    await rt.experience.send(text,null,{replyTo:{id:mode.id,senderUid:mode.senderUid,senderName:mode.senderName.slice(0,48),text:mode.preview.slice(0,180)}});
+    await rt.experience.send(text,null,{connectionId:mode.connectionId,replyTo:{id:mode.id,senderUid:mode.senderUid,senderName:mode.senderName.slice(0,48),text:mode.preview.slice(0,180)}});
   }
 
   async function editMessage(id, text) {
-    const ref = messageRef(id); if (!ref) return;
+    const ref = composerMode?.connectionId?doc(db,'connections',composerMode.connectionId,'messages',id):messageRef(id); if (!ref) return;
     const current=await getDoc(ref);if(!current.exists())throw Error('Message no longer exists.');const data=current.data();await updateDoc(ref,{text,editedAt:serverTimestamp(),editHistory:[...(data.editHistory||[]),{text:data.text,at:Date.now()}].slice(-30)});
   }
 
@@ -681,12 +690,7 @@
     const snapshot = await getDoc(ref);
     if (!snapshot.exists()) return;
     const current = snapshot.data();
-    const reactions = { ...(current.reactions || {}) };
-    const list = Array.isArray(reactions[key]) ? [...reactions[key]] : [];
-    const index = list.indexOf(state.user.uid);
-    if (index >= 0) list.splice(index, 1); else list.push(state.user.uid);
-    if (list.length) reactions[key] = [...new Set(list)].slice(0, 2); else delete reactions[key];
-    await updateDoc(ref, { reactions });
+    await rt.reactions.set(ref,key,!(current.reactions?.[key]||[]).includes(state.user.uid));
   }
 
   async function deleteStoredMedia(message) {
@@ -717,24 +721,26 @@
         setComposerMode({ type: 'reply', id: message.id, senderUid: message.senderUid, senderName: senderNameFor(message), preview: previewForMessage(message) });
       } else if (type === 'edit') {
         setComposerMode({ type: 'edit', id: message.id, senderUid: message.senderUid, senderName: senderNameFor(message), preview: previewForMessage(message), text: message.text || '' });
+      } else if (type === 'forward') {
+        rt.experience.messageMenu(message.id);document.querySelector('[data-action="forward"]')?.click();
       } else if (type === 'react') {
         toggleReactionPicker(row);
       } else if (type === 'delete') {
-        const ok = await askDecision({ title: 'Delete message?', copy: 'This removes it from both sides of the conversation.', confirmText: 'Delete message', cancelText: 'Keep message' });
+        const ok = await askDecision({ title: 'Delete message?', copy: 'This removes the selected message from both sides: '+previewForMessage(message), confirmText: 'Delete message', cancelText: 'Keep message' });
         if (ok) { await deleteDoc(messageRef(message.id)); toast('Message deleted'); }
       } else if (type === 'cancel-scheduled') {
         const ok = await askDecision({ title: 'Cancel scheduled message?', copy: 'It will be deleted now and will not be sent later.', confirmText: 'Cancel message', cancelText: 'Keep scheduled' });
         if (ok) { await deleteDoc(messageRef(message.id)); toast('Scheduled message cancelled'); }
       } else if (type === 'copy') {
         const copy = message.text || message.media?.url || '';
-        if (copy) { await navigator.clipboard.writeText(copy); toast('Copied'); }
+        if (copy) { if(rt.copyText)await rt.copyText(copy);else {await navigator.clipboard.writeText(copy);toast('Copied');} }
       }
     } catch (error) { toast(error.message || 'Message action failed.'); }
   });
 
   document.addEventListener('pointerdown', event => {
     if (!event.target.closest('.v9-reaction-picker') && !event.target.closest('[data-msg-action="react"]')) closeReactionPickers();
-    if (!event.target.closest('#v9-gif-picker') && !event.target.closest('#v9-gif-button')) toggleGifPicker(false);
+    if (!event.target.closest('#v9-gif-picker') && !event.target.closest('#v9-gif-button') && !event.target.closest('.space-gif')) toggleGifPicker(false);
   });
 
   $('message-form')?.addEventListener('submit', async event => {
@@ -745,6 +751,7 @@
     if (!text) return;
     if (text.length > 2000) { toast('Messages can be up to 2,000 characters.'); return; }
     const mode = composerMode;
+    if(mode.connectionId!==state.activeId){toast('Return to the original conversation to finish this reply or edit.');return;}
     input.value = ''; input.style.height = '';
     clearComposerMode();
     try {
