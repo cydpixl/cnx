@@ -1,0 +1,9 @@
+{
+  "version": "18.9.1",
+  "builtAt": "2026-10-05T21:47:50.952Z",
+  "changes": [
+    "Deployment-scoped media validation repairs failed image messages",
+    "File selection preserves its original conversation and account",
+    "Upload a file supports photos, videos and ordinary audio"
+  ]
+}

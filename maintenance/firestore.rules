@@ -1,0 +1,1493 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+        function validMedia(media) {
+          let item = media;
+          return item.keys().hasOnly(['url','name','type','size','alt','spoiler'])
+            && item.get('alt','').matches('(?s)^.{0,200}$') && item.get('spoiler',false) is bool
+            && item.url.matches('^https://(cnx-cf-media[.]pixlcyd[.]workers[.]dev/media/.+|(media[0-9]*|i)[.]giphy[.]com/.+)$')
+            && item.name.matches('(?s)^.{0,100}$')
+            && item.type.matches('^(image/(jpeg|png|webp|gif)|video/(mp4|webm|quicktime)|audio/(webm|mp4|ogg|mpeg|wav)|application/(pdf|zip|octet-stream)|text/plain)$')
+            && item.size is int && item.size > 0 && item.size <= 536870912;
+        }
+        function validAttachments() {
+          let count = request.resource.data.attachments.size();
+          return request.resource.data.attachments is list && count > 0 && count <= 10
+            && validMedia(request.resource.data.attachments[0])
+            && (count <= 1 || validMedia(request.resource.data.attachments[1]))
+            && (count <= 2 || validMedia(request.resource.data.attachments[2]))
+            && (count <= 3 || validMedia(request.resource.data.attachments[3]))
+            && (count <= 4 || validMedia(request.resource.data.attachments[4]))
+            && (count <= 5 || validMedia(request.resource.data.attachments[5]))
+            && (count <= 6 || validMedia(request.resource.data.attachments[6]))
+            && (count <= 7 || validMedia(request.resource.data.attachments[7]))
+            && (count <= 8 || validMedia(request.resource.data.attachments[8]))
+            && (count <= 9 || validMedia(request.resource.data.attachments[9]))
+          ;
+        }
+        function validReply(data) {
+          let reply = data.get('replyTo',{});
+          return !('replyTo' in data) || (
+            reply.keys().hasOnly(['id','senderUid','senderName','text'])
+            && reply.id.matches('(?s)^.{0,128}$')
+            && reply.senderUid is string
+            && reply.senderName.matches('(?s)^.{0,48}$')
+            && reply.text.matches('(?s)^.{0,180}$'));
+        }
+        function validMessageMedia() {
+          return (!('attachments' in request.resource.data) || validAttachments()) && (!('media' in request.resource.data)
+            || ('attachments' in request.resource.data ? request.resource.data.media == request.resource.data.attachments[0] : validMedia(request.resource.data.media)));
+        }
+        function validReactions(data) {
+          return !('reactions' in data) || (
+            data.reactions is map
+            && data.reactions.keys().hasOnly(['like','heart','laugh','wow','sad','fire','celebrate'])
+            && (!('like' in data.reactions) || (data.reactions.like is list && data.reactions.like.size() <= 100))
+            && (!('heart' in data.reactions) || (data.reactions.heart is list && data.reactions.heart.size() <= 100))
+            && (!('laugh' in data.reactions) || (data.reactions.laugh is list && data.reactions.laugh.size() <= 100))
+            && (!('wow' in data.reactions) || (data.reactions.wow is list && data.reactions.wow.size() <= 100))
+            && (!('sad' in data.reactions) || (data.reactions.sad is list && data.reactions.sad.size() <= 100))
+            && (!('fire' in data.reactions) || (data.reactions.fire is list && data.reactions.fire.size() <= 100))
+            && (!('celebrate' in data.reactions) || (data.reactions.celebrate is list && data.reactions.celebrate.size() <= 100)));
+        }
+    function validInitialReactions(data) {
+      let reactions = data.get('reactions',{});
+      return !('reactions' in data) || (reactions.keys().hasOnly(['like','heart','laugh','wow','sad','fire','celebrate'])
+        && reactions.values().hasOnly([[],[request.auth.uid]]));
+    }
+    function messageReactionsOwn(members,key){let before=resource.data.get('reactions',{}).get(key,[]);let after=request.resource.data.get('reactions',{}).get(key,[]);return after.hasOnly(members)&&after.size()==after.toSet().size()&&before.removeAll([request.auth.uid]).toSet()==after.removeAll([request.auth.uid]).toSet();}
+    function validSharedMessage(data){
+      return data.keys().hasOnly(['senderUid','text','media','attachments','voice','forwarded','createdAt','replyTo','reactions','clientId','clientCreatedAt'])
+        && data.senderUid==request.auth.uid && data.text is string && data.text.size()<=2000
+        && (data.text.size()>0||'media' in data||'attachments' in data)
+        && validMessageMedia() && validReply(data) && validInitialReactions(data)
+        && data.createdAt==request.time && data.clientCreatedAt is int && data.clientCreatedAt>0
+        && (!('voice' in data)||(data.voice is map&&data.voice.keys().hasOnly(['duration','waveform'])&&data.voice.duration is number&&data.voice.duration>0&&data.voice.duration<=310&&data.voice.waveform is list&&data.voice.waveform.size()<=64))
+        && (!('forwarded' in data)||(data.forwarded is map&&data.forwarded.keys().hasOnly(['snapshot','note'])&&data.forwarded.snapshot==true&&(!('note' in data.forwarded)||data.forwarded.note is string&&data.forwarded.note.size()<=500)))
+        ;
+    }
+    function validSharedUpdate(members,canPin){
+      let keys=request.resource.data.diff(resource.data).affectedKeys();
+      return (resource.data.senderUid==request.auth.uid&&keys.hasOnly(['text','editedAt','editHistory'])&&request.resource.data.text is string&&request.resource.data.text.size()>0&&request.resource.data.text.size()<=2000&&request.resource.data.editedAt==request.time)
+        || (canPin&&keys.hasOnly(['pinned'])&&request.resource.data.pinned is bool)
+        || (keys.hasOnly(['reactions'])&&validReactions(request.resource.data)&&messageReactionsOwn(members,'like')&&messageReactionsOwn(members,'heart')&&messageReactionsOwn(members,'laugh')&&messageReactionsOwn(members,'wow')&&messageReactionsOwn(members,'sad')&&messageReactionsOwn(members,'fire')&&messageReactionsOwn(members,'celebrate'));
+    }
+    function signedIn() { return request.auth != null; }
+    function member(data) { return signedIn() && request.auth.uid in data.members; }
+    function pairValid(data) {
+      return data.keys().hasOnly(['members', 'requestedBy', 'status', 'createdAt', 'updatedAt'])
+        && data.members is list && data.members.size() == 2
+        && data.members[0] is string && data.members[1] is string
+        && data.members[0] != data.members[1]
+        && request.auth.uid in data.members
+        && data.requestedBy == request.auth.uid
+        && data.status == 'pending'
+        && data.createdAt == request.time && data.updatedAt == request.time;
+    }
+    match /handles/{handle} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if signedIn()
+        && handle.matches('^[a-z0-9_]{3,20}$')
+        && request.resource.data.keys().hasOnly(['uid', 'createdAt'])
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.createdAt == request.time;
+      allow update, delete: if false;
+    }
+    match /users/{uid} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if signedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['handle','displayName','avatar','avatarPosition','bio','games','bannerColor','bannerImage','discordUserId','presenceState','customStatus','profileGames','favoriteMovies','profileDrawing','lastActiveAt','createdAt'])
+        && request.resource.data.handle is string
+        && request.resource.data.displayName is string
+        && request.resource.data.avatar is string
+        && request.resource.data.bio is string
+        && request.resource.data.bio.size() <= 160
+        && request.resource.data.games is list
+        && (!('bannerColor' in request.resource.data) || request.resource.data.bannerColor.matches('^#[0-9a-fA-F]{6}$'))
+        && (!('bannerImage' in request.resource.data) || request.resource.data.bannerImage == '' || request.resource.data.bannerImage.matches('^https://cnx-cf-media[.]pixlcyd[.]workers[.]dev/media/.+'))
+        && (!('discordUserId' in request.resource.data) || (request.resource.data.discordUserId is string && (request.resource.data.discordUserId == '' || request.resource.data.discordUserId.matches('^[0-9]{17,20}$'))))
+        && (!('profileGames' in request.resource.data) || (request.resource.data.profileGames is list && request.resource.data.profileGames.size() <= 5 && request.resource.data.profileGames.toSet().hasOnly(['tic-tac-toe','connect-four','pong','reversi','memory'])))
+        && (!('favoriteMovies' in request.resource.data) || (request.resource.data.favoriteMovies is list && request.resource.data.favoriteMovies.size() <= 5))
+        && (!('profileDrawing' in request.resource.data) || (request.resource.data.profileDrawing is string && request.resource.data.profileDrawing.size() <= 120000 && (request.resource.data.profileDrawing == '' || request.resource.data.profileDrawing.matches('^data:image/png;base64,[A-Za-z0-9+/=]+$'))))
+        && (!('customStatus' in request.resource.data) || (request.resource.data.customStatus is string && request.resource.data.customStatus.size() <= 100))
+        && (!('presenceState' in request.resource.data) || request.resource.data.presenceState in ['online','away','offline','idle','dnd','invisible'])
+        && (!('lastActiveAt' in request.resource.data) || request.resource.data.lastActiveAt == request.time)
+        && request.resource.data.createdAt == request.time
+        && getAfter(/databases/$(database)/documents/handles/$(request.resource.data.handle)).data.uid == uid;
+      allow update: if signedIn() && request.auth.uid == uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName','avatar','avatarPosition','bio','games','bannerColor','bannerImage','discordUserId','presenceState','customStatus','profileGames','favoriteMovies','profileDrawing','lastActiveAt'])
+        && request.resource.data.bio is string && request.resource.data.bio.size() <= 160
+        && (!('bannerColor' in request.resource.data) || request.resource.data.bannerColor.matches('^#[0-9a-fA-F]{6}$'))
+        && (!('bannerImage' in request.resource.data) || request.resource.data.bannerImage == '' || request.resource.data.bannerImage.matches('^https://cnx-cf-media[.]pixlcyd[.]workers[.]dev/media/.+'))
+        && (!('discordUserId' in request.resource.data) || (request.resource.data.discordUserId is string && (request.resource.data.discordUserId == '' || request.resource.data.discordUserId.matches('^[0-9]{17,20}$'))))
+        && (!('profileGames' in request.resource.data) || (request.resource.data.profileGames is list && request.resource.data.profileGames.size() <= 5 && request.resource.data.profileGames.toSet().hasOnly(['tic-tac-toe','connect-four','pong','reversi','memory'])))
+        && (!('favoriteMovies' in request.resource.data) || (request.resource.data.favoriteMovies is list && request.resource.data.favoriteMovies.size() <= 5))
+        && (!('profileDrawing' in request.resource.data) || (request.resource.data.profileDrawing is string && request.resource.data.profileDrawing.size() <= 120000 && (request.resource.data.profileDrawing == '' || request.resource.data.profileDrawing.matches('^data:image/png;base64,[A-Za-z0-9+/=]+$'))))
+        && (!('customStatus' in request.resource.data) || (request.resource.data.customStatus is string && request.resource.data.customStatus.size() <= 100))
+        && (!('presenceState' in request.resource.data) || request.resource.data.presenceState in ['online','away','offline','idle','dnd','invisible'])
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['lastActiveAt']) || request.resource.data.lastActiveAt == request.time);
+      allow delete: if false;
+    }
+    match /connections/{id} {
+      allow get, list: if member(resource.data);
+      allow create: if signedIn() && pairValid(request.resource.data)
+        && exists(/databases/$(database)/documents/users/$(request.resource.data.members[0]))
+        && exists(/databases/$(database)/documents/users/$(request.resource.data.members[1]));
+      allow update: if member(resource.data)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','updatedAt'])
+        && request.resource.data.updatedAt == request.time
+        && ((resource.data.status == 'pending'
+          && request.auth.uid != resource.data.requestedBy
+          && request.resource.data.status in ['accepted','declined'])
+          || (resource.data.status == 'pending'
+          && request.auth.uid == resource.data.requestedBy
+          && request.resource.data.status == 'cancelled'));
+      allow delete: if false;
+      match /messages/{messageId} {
+        function parent() { return get(/databases/$(database)/documents/connections/$(id)).data; }
+        allow get, list: if member(parent()) && parent().status == 'accepted';
+        allow create: if member(parent()) && parent().status == 'accepted'
+          && request.resource.data.keys().hasOnly(['senderUid','text','media','attachments','voice','forwarded','createdAt','scheduledFor','replyTo','reactions','clientId','clientCreatedAt'])
+          && request.resource.data.senderUid == request.auth.uid
+          && (!('clientId' in request.resource.data) || (request.resource.data.clientId is string && request.resource.data.clientId.size() > 0 && request.resource.data.clientId.size() <= 80))
+          && (!('clientCreatedAt' in request.resource.data) || (request.resource.data.clientCreatedAt is int && request.resource.data.clientCreatedAt > 0))
+          && request.resource.data.text is string
+          && request.resource.data.text.size() <= 2000
+          && (request.resource.data.text.size() > 0 || 'media' in request.resource.data || ('attachments' in request.resource.data && request.resource.data.attachments.size() > 0))
+          && validMessageMedia()
+          && (!('voice' in request.resource.data) || (request.resource.data.voice is map && request.resource.data.voice.keys().hasOnly(['duration','waveform']) && request.resource.data.voice.duration is number && request.resource.data.voice.duration > 0 && request.resource.data.voice.duration <= 310 && request.resource.data.voice.waveform is list && request.resource.data.voice.waveform.size() <= 64))
+          && (!('forwarded' in request.resource.data) || (request.resource.data.forwarded is map && ((request.resource.data.forwarded.keys().hasOnly(['name']) && request.resource.data.forwarded.name is string && request.resource.data.forwarded.name.size() <= 48) || (request.resource.data.forwarded.keys().hasOnly(['snapshot','note']) && request.resource.data.forwarded.snapshot == true && (!('note' in request.resource.data.forwarded) || (request.resource.data.forwarded.note is string && request.resource.data.forwarded.note.size() <= 500))))))
+          && request.resource.data.createdAt == request.time
+          && (!('scheduledFor' in request.resource.data) || (
+            request.resource.data.scheduledFor is timestamp
+            && request.resource.data.scheduledFor > request.time
+            && !('media' in request.resource.data)))
+          && validReply(request.resource.data)
+          && validInitialReactions(request.resource.data);
+        allow update: if member(parent()) && parent().status == 'accepted'
+          && ((resource.data.senderUid == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['text','editedAt','editHistory'])
+            && request.resource.data.text is string
+            && request.resource.data.text.size() > 0 && request.resource.data.text.size() <= 2000
+            && request.resource.data.editedAt == request.time
+            && request.resource.data.editHistory is list && request.resource.data.editHistory.size() > 0 && request.resource.data.editHistory.size() <= 30
+            && request.resource.data.editHistory[request.resource.data.editHistory.size()-1].text == resource.data.text)
+          || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['pinned']) && request.resource.data.pinned is bool)
+          || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reactions'])
+            && validReactions(request.resource.data)
+            && ownReactionChange('like') && ownReactionChange('heart') && ownReactionChange('laugh')
+            && ownReactionChange('wow') && ownReactionChange('sad') && ownReactionChange('fire') && ownReactionChange('celebrate')));
+        allow delete: if member(parent()) && parent().status == 'accepted' && resource.data.senderUid == request.auth.uid;
+        function ownReactionChange(key) {
+          let before = resource.data.get('reactions',{}).get(key,[]);
+          let after = request.resource.data.get('reactions',{}).get(key,[]);
+          return after.toSet().hasOnly(parent().members)
+            && after.size() == after.toSet().size()
+            && before.removeAll([request.auth.uid]).toSet() == after.removeAll([request.auth.uid]).toSet();
+        }
+      }
+      match /receipts/{uid} {
+        function parent() { return get(/databases/$(database)/documents/connections/$(id)).data; }
+        allow get, list: if member(parent()) && parent().status == 'accepted';
+        allow create, update: if member(parent()) && parent().status == 'accepted'
+          && uid == request.auth.uid
+          && request.resource.data.keys().hasOnly(['lastReadAt','lastDeliveredAt','lastReadMessageId','lastDeliveredMessageId'])
+          && (!('lastReadMessageId' in request.resource.data) || (request.resource.data.lastReadMessageId is string && request.resource.data.lastReadMessageId.size() <= 128))
+          && (!('lastDeliveredMessageId' in request.resource.data) || (request.resource.data.lastDeliveredMessageId is string && request.resource.data.lastDeliveredMessageId.size() <= 128))
+          && (!('lastReadAt' in request.resource.data) || request.resource.data.lastReadAt is timestamp)
+          && (!('lastDeliveredAt' in request.resource.data) || request.resource.data.lastDeliveredAt is timestamp)
+          && (('lastReadAt' in request.resource.data && request.resource.data.lastReadAt == request.time) || ('lastDeliveredAt' in request.resource.data && request.resource.data.lastDeliveredAt == request.time));
+        allow delete: if false;
+      }
+      match /typing/{uid} {
+        function parent() { return get(/databases/$(database)/documents/connections/$(id)).data; }
+        allow get, list: if member(parent()) && parent().status == 'accepted';
+        allow create, update: if member(parent()) && parent().status == 'accepted'
+          && uid == request.auth.uid
+          && request.resource.data.keys().hasOnly(['typing','updatedAt'])
+          && request.resource.data.typing is bool
+          && request.resource.data.updatedAt == request.time;
+        allow delete: if false;
+      }
+      match /calls/{callId} {
+        function conversation() { return get(/databases/$(database)/documents/connections/$(id)).data; }
+        allow get, list: if member(conversation());
+        allow create: if member(conversation()) && conversation().status == 'accepted'
+          && request.resource.data.keys().hasOnly(['callerUid','calleeUid','kind','status','offer','createdAt','updatedAt','callerPresent','calleePresent'])
+          && request.resource.data.callerUid == request.auth.uid
+          && request.resource.data.calleeUid in conversation().members
+          && request.resource.data.calleeUid != request.auth.uid
+          && request.resource.data.kind in ['voice','video']
+          && request.resource.data.status == 'ringing'
+          && (!('callerPresent' in request.resource.data) || request.resource.data.callerPresent == true)
+          && (!('calleePresent' in request.resource.data) || request.resource.data.calleePresent == true)
+          && request.resource.data.offer.type == 'offer'
+          && request.resource.data.offer.sdp is string
+          && request.resource.data.offer.sdp.size() < 30000
+          && request.resource.data.createdAt == request.time
+          && request.resource.data.updatedAt == request.time;
+        allow update: if member(conversation()) && conversation().status == 'accepted'
+          && request.resource.data.updatedAt == request.time
+          && ((resource.data.status == 'active'
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([request.auth.uid == resource.data.callerUid ? 'callerHeartbeat' : 'calleeHeartbeat','updatedAt'])
+            && request.resource.data[request.auth.uid == resource.data.callerUid ? 'callerHeartbeat' : 'calleeHeartbeat'] == request.time)
+          || (resource.data.status == 'active'
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['callerPresent','calleePresent','status','rejoinOffer','updatedAt'])
+            && request.resource.data.status in ['active','ended']
+            && (request.auth.uid == resource.data.callerUid ? request.resource.data.get('calleePresent',true) == resource.data.get('calleePresent',true) : request.resource.data.get('callerPresent',true) == resource.data.get('callerPresent',true))
+            && request.resource.data.get('callerPresent',true) is bool && request.resource.data.get('calleePresent',true) is bool
+            && (request.resource.data.status != 'ended' || (request.resource.data.callerPresent == false && request.resource.data.calleePresent == false))
+            && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['rejoinOffer']) || (request.resource.data.rejoinOffer.keys().hasOnly(['uid','sdp','revision','id','deviceId','protocol','preparedAt']) && request.resource.data.rejoinOffer.uid == request.auth.uid && request.resource.data.rejoinOffer.sdp is string && request.resource.data.rejoinOffer.sdp.size() < 30000 && request.resource.data.rejoinOffer.revision == resource.data.get('rejoinOffer',{}).get('revision',0)+1
+              && request.resource.data.rejoinOffer.protocol == 2 && request.resource.data.rejoinOffer.id is string && request.resource.data.rejoinOffer.id.size() <= 80 && request.resource.data.rejoinOffer.deviceId is string && request.resource.data.rejoinOffer.deviceId.size() <= 80
+              && request.resource.data.rejoinOffer.preparedAt == request.time
+              && (resource.data.get('rejoinOffer',{}).get('preparedAt',request.time-duration.value(31,'s'))+duration.value(30,'s') <= request.time || resource.data.get('rejoinCommit',{}).get('revision',-1) == resource.data.get('rejoinOffer',{}).get('revision',0) || resource.data.get('rejoinCancel',{}).get('revision',-1) == resource.data.get('rejoinOffer',{}).get('revision',0)))))
+            || (resource.data.status == 'active' && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['rejoinReady','updatedAt'])
+              && request.auth.uid != resource.data.rejoinOffer.uid && request.resource.data.rejoinReady.keys().hasOnly(['uid','id','revision','at']) && request.resource.data.rejoinReady.uid == request.auth.uid
+              && request.resource.data.rejoinReady.id == resource.data.rejoinOffer.id && request.resource.data.rejoinReady.revision == resource.data.rejoinOffer.revision && request.resource.data.rejoinReady.at == request.time && resource.data.rejoinOffer.preparedAt+duration.value(30,'s') > request.time)
+            || (resource.data.status == 'active' && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['rejoinCommit','updatedAt'])
+              && request.auth.uid == resource.data.rejoinOffer.uid && request.resource.data.rejoinCommit.keys().hasOnly(['uid','id','revision','deviceId','at']) && request.resource.data.rejoinCommit.uid == request.auth.uid
+              && request.resource.data.rejoinCommit.id == resource.data.rejoinOffer.id && request.resource.data.rejoinCommit.revision == resource.data.rejoinOffer.revision && request.resource.data.rejoinCommit.deviceId == resource.data.rejoinOffer.deviceId
+              && request.resource.data.rejoinCommit.at == request.time && resource.data.rejoinOffer.preparedAt+duration.value(30,'s') > request.time && resource.data.rejoinReady.id == resource.data.rejoinOffer.id
+              && resource.data.get('rejoinCancel',{}).get('id','') != resource.data.rejoinOffer.id && resource.data.get('rejoinCommit',{}).get('id','') != resource.data.rejoinOffer.id)
+            || (resource.data.status == 'active' && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['rejoinCancel','updatedAt'])
+              && request.resource.data.rejoinCancel.keys().hasOnly(['uid','id','revision','at']) && request.resource.data.rejoinCancel.uid == request.auth.uid && request.resource.data.rejoinCancel.at == request.time
+              && request.resource.data.rejoinCancel.id == resource.data.rejoinOffer.id && request.resource.data.rejoinCancel.revision == resource.data.rejoinOffer.revision && resource.data.get('rejoinCommit',{}).get('id','') != resource.data.rejoinOffer.id)
+            || (resource.data.status == 'active'
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['rejoinAnswer','updatedAt'])
+            && request.resource.data.rejoinAnswer.keys().hasOnly(['uid','sdp','revision'])
+            && request.resource.data.rejoinAnswer.uid == request.auth.uid && request.auth.uid != resource.data.rejoinOffer.uid
+            && request.resource.data.rejoinAnswer.sdp is string && request.resource.data.rejoinAnswer.sdp.size() < 30000
+            && request.resource.data.rejoinAnswer.revision == resource.data.rejoinOffer.revision)
+            || (resource.data.status == 'ringing'
+            && request.auth.uid == resource.data.calleeUid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','answer','updatedAt'])
+            && request.resource.data.status == 'active'
+            && request.resource.data.answer.type == 'answer'
+            && request.resource.data.answer.sdp is string
+            && request.resource.data.answer.sdp.size() < 30000)
+            || (resource.data.status in ['ringing','active']
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','updatedAt'])
+            && request.resource.data.status == 'ended')
+            || (resource.data.status == 'active' && request.auth.uid == resource.data.callerUid
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['restartOffer','updatedAt'])
+              && request.resource.data.restartOffer.keys().hasOnly(['type','sdp','revision'])
+              && request.resource.data.restartOffer.type == 'offer' && request.resource.data.restartOffer.sdp is string && request.resource.data.restartOffer.sdp.size() < 30000 && request.resource.data.restartOffer.revision is number)
+            || (resource.data.status == 'active' && request.auth.uid == resource.data.calleeUid
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['restartAnswer','updatedAt'])
+              && request.resource.data.restartAnswer.keys().hasOnly(['type','sdp','revision'])
+              && request.resource.data.restartAnswer.type == 'answer' && request.resource.data.restartAnswer.sdp is string && request.resource.data.restartAnswer.sdp.size() < 30000 && request.resource.data.restartAnswer.revision == resource.data.restartOffer.revision)
+            || (resource.data.status == 'active' && request.auth.uid == resource.data.calleeUid
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['restartRequestedAt','updatedAt']) && request.resource.data.restartRequestedAt == request.time));
+        allow delete: if false;
+        match /candidates/{candidateId} {
+          function conversation() { return get(/databases/$(database)/documents/connections/$(id)).data; }
+          allow get, list: if member(conversation());
+          allow create: if member(conversation()) && conversation().status == 'accepted'
+            && request.resource.data.keys().hasOnly(['uid','candidate','sdpMid','sdpMLineIndex','createdAt','epoch'])
+            && request.resource.data.uid == request.auth.uid
+            && (!('epoch' in request.resource.data) || request.resource.data.epoch is number)
+            && request.resource.data.candidate is string
+            && request.resource.data.candidate.size() < 4000
+            && request.resource.data.createdAt == request.time;
+          allow update, delete: if false;
+        }
+        match /movie/{movieId} {
+          function conversation() { return get(/databases/$(database)/documents/connections/$(id)).data; }
+          function call() { return get(/databases/$(database)/documents/connections/$(id)/calls/$(callId)).data; }
+          function validMovie() {
+            return request.resource.data.keys().hasOnly(['url','title','poster','captionUrl','position','playing','controllerUid','updatedAt','intent'])
+              && request.resource.data.url is string
+              && request.resource.data.url.matches('^https://cnx-cf-media[.]pixlcyd[.]workers[.]dev/media/.+[.](mp4|webm|mov|mp3|m4a|wav|ogg|weba)$')
+              && request.resource.data.title is string && request.resource.data.title.size() <= 120
+              && request.resource.data.poster is string && request.resource.data.poster.size() <= 400
+              && request.resource.data.captionUrl is string && request.resource.data.captionUrl.size() <= 400
+              && request.resource.data.position is number && request.resource.data.position >= 0 && request.resource.data.position <= 86400
+              && request.resource.data.playing is bool
+              && request.resource.data.controllerUid == request.auth.uid
+              && (!('intent' in request.resource.data) || request.resource.data.intent in ['select','seek','play','pause','heartbeat'])
+              && request.resource.data.updatedAt == request.time;
+          }
+          allow get, list: if movieId == 'current' && member(conversation()) && conversation().status == 'accepted';
+          allow create, update: if movieId == 'current' && member(conversation()) && conversation().status == 'accepted' && call().status in ['ringing','active'] && validMovie();
+          allow delete: if false;
+        }
+      }
+      match /watch/{watchId} {
+        function conversation() { return get(/databases/$(database)/documents/connections/$(id)).data; }
+        function validWatch() {
+          return request.resource.data.keys().hasOnly(['url','title','position','playing','updatedAt','startedBy'])
+            && request.resource.data.url is string
+            && request.resource.data.url.matches('^https://cnx-cf-media[.]pixlcyd[.]workers[.]dev/media/.+')
+            && request.resource.data.title is string
+            && request.resource.data.title.size() <= 100
+            && request.resource.data.position is number
+            && request.resource.data.position >= 0
+            && request.resource.data.position <= 21600
+            && request.resource.data.playing is bool
+            && request.resource.data.updatedAt == request.time
+            && request.resource.data.startedBy == request.auth.uid;
+        }
+        allow get, list: if watchId == 'current' && member(conversation()) && conversation().status == 'accepted';
+        allow create, update: if watchId == 'current' && member(conversation()) && conversation().status == 'accepted' && validWatch();
+        allow delete: if false;
+      }
+    }
+    match /groups/{groupId} {
+      function groupMember(data) { return signedIn() && request.auth.uid in data.members; }
+      function groupAdmin(data) { return groupMember(data) && (request.auth.uid == data.ownerUid || request.auth.uid in data.admins); }
+      function validGroup(data) {
+        return data.keys().hasOnly(['name','ownerUid','admins','members','createdAt','updatedAt'])
+          && data.name is string && data.name.size() >= 2 && data.name.size() <= 40
+          && data.ownerUid is string
+          && data.members is list && data.members.size() >= 1 && data.members.size() <= 20
+          && data.admins is list && data.admins.size() >= 1 && data.admins.size() <= data.members.size()
+          && data.ownerUid in data.members && data.ownerUid in data.admins
+          && data.members.hasAll(data.admins);
+      }
+      allow get, list: if groupMember(resource.data);
+      allow create: if signedIn() && validGroup(request.resource.data)
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.members.size() >= 2
+        && request.resource.data.members[0] == request.auth.uid
+        && request.resource.data.admins == [request.auth.uid]
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+      allow update: if groupMember(resource.data) && validGroup(request.resource.data)
+        && request.resource.data.ownerUid == resource.data.ownerUid
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedAt == request.time
+        && (
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['updatedAt'])
+          || (request.auth.uid == resource.data.ownerUid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name','admins','members','updatedAt']))
+          || (groupAdmin(resource.data)
+            && request.resource.data.admins == resource.data.admins
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name','members','updatedAt']))
+          || (request.auth.uid != resource.data.ownerUid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['admins','members','updatedAt'])
+            && !(request.auth.uid in request.resource.data.members)
+            && request.resource.data.members.toSet() == resource.data.members.toSet().difference([request.auth.uid].toSet())
+            && request.resource.data.admins.toSet() == resource.data.admins.toSet().difference([request.auth.uid].toSet()))
+        );
+      allow delete: if false;
+      match /watch/{watchId} {
+        function group(){return get(/databases/$(database)/documents/groups/$(groupId)).data;}
+        allow get,list: if groupMember(group());
+        allow create,update: if watchId == 'current' && groupMember(group())
+          && request.resource.data.keys().hasOnly(['url','title','poster','captionUrl','position','playing','controllerUid','updatedAt','intent'])
+          && request.resource.data.url is string && request.resource.data.url.matches('^https://cnx-cf-media[.]pixlcyd[.]workers[.]dev/media/.+[.](mp4|webm|mov|mp3|m4a|wav|ogg|weba)$')
+          && request.resource.data.title is string && request.resource.data.title.size() <= 120
+          && request.resource.data.poster is string && request.resource.data.poster.size() <= 400
+          && request.resource.data.captionUrl is string && request.resource.data.captionUrl.size() <= 400
+          && request.resource.data.position is number && request.resource.data.position >= 0 && request.resource.data.position <= 86400
+          && request.resource.data.playing is bool && request.resource.data.controllerUid == request.auth.uid
+          && request.resource.data.intent in ['select','seek','play','pause','heartbeat'] && request.resource.data.updatedAt == request.time;
+        allow delete: if false;
+      }
+      match /messages/{messageId} {
+        function group() { return get(/databases/$(database)/documents/groups/$(groupId)).data; }
+        allow get, list: if groupMember(group());
+        allow create: if groupMember(group()) && validSharedMessage(request.resource.data);
+        allow update: if groupMember(group()) && validSharedUpdate(group().members,true);
+          allow delete: if groupMember(group()) && (resource.data.senderUid == request.auth.uid || groupAdmin(group()));
+      }
+    }
+    match /servers/{serverId} {
+      function serverMember(data) { return signedIn() && request.auth.uid in data.members; }
+      function serverAdmin(data) { return serverMember(data) && (request.auth.uid == data.ownerUid || request.auth.uid in data.admins); }
+      function validServer(data) {
+        return data.keys().hasOnly(['name','ownerUid','admins','members','createdAt','updatedAt'])
+          && data.name is string && data.name.size() >= 2 && data.name.size() <= 40
+          && data.ownerUid is string
+          && data.members is list && data.members.size() >= 1 && data.members.size() <= 100
+          && data.admins is list && data.admins.size() >= 1 && data.admins.size() <= data.members.size()
+          && data.ownerUid in data.members && data.ownerUid in data.admins
+          && data.members.hasAll(data.admins);
+      }
+      allow get, list: if serverMember(resource.data);
+      allow create: if signedIn() && validServer(request.resource.data)
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.members[0] == request.auth.uid
+        && request.resource.data.admins == [request.auth.uid]
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+      allow update: if serverMember(resource.data) && validServer(request.resource.data)
+        && request.resource.data.ownerUid == resource.data.ownerUid
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedAt == request.time
+        && (
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['updatedAt'])
+          || (request.auth.uid == resource.data.ownerUid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name','admins','members','updatedAt']))
+          || (serverAdmin(resource.data)
+            && request.resource.data.admins == resource.data.admins
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name','members','updatedAt']))
+          || (request.auth.uid != resource.data.ownerUid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['admins','members','updatedAt'])
+            && !(request.auth.uid in request.resource.data.members)
+            && request.resource.data.members.toSet() == resource.data.members.toSet().difference([request.auth.uid].toSet())
+            && request.resource.data.admins.toSet() == resource.data.admins.toSet().difference([request.auth.uid].toSet()))
+        );
+      allow delete: if false;
+      match /channels/{channelId} {
+        function server() { return get(/databases/$(database)/documents/servers/$(serverId)).data; }
+        allow get, list: if serverMember(server());
+        allow create: if serverAdmin(server())
+          && request.resource.data.keys().hasOnly(['name','position','createdBy','createdAt'])
+          && request.resource.data.name is string && request.resource.data.name.size() >= 1 && request.resource.data.name.size() <= 30
+          && request.resource.data.position is number
+          && request.resource.data.createdBy == request.auth.uid
+          && request.resource.data.createdAt == request.time;
+        allow update: if serverAdmin(server())
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name','position'])
+          && request.resource.data.name is string && request.resource.data.name.size() >= 1 && request.resource.data.name.size() <= 30
+          && request.resource.data.position is number;
+        allow delete: if false;
+        match /messages/{messageId} {
+          function serverForMessage() { return get(/databases/$(database)/documents/servers/$(serverId)).data; }
+          allow get, list: if serverMember(serverForMessage());
+          allow create: if serverMember(serverForMessage()) && validSharedMessage(request.resource.data);
+        allow update: if serverMember(serverForMessage()) && validSharedUpdate(serverForMessage().members,serverAdmin(serverForMessage()));
+          allow delete: if serverMember(serverForMessage()) && (resource.data.senderUid == request.auth.uid || serverAdmin(serverForMessage()));
+        }
+      }
+    }
+    match /movies/{movieId} {
+      allow get, list: if signedIn();
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['ownerUid','url','title','kind','showTitle','season','episode','episodeTitle','year','description','poster','backdrop','captionUrl','size','tmdbId','createdAt'])
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.url.matches('^https://cnx-cf-media[.]pixlcyd[.]workers[.]dev/media/' + request.auth.uid + '(%2[Ff]|/)[-a-f0-9]{36}[.](mp4|webm|mov|mp3|m4a|wav|ogg|weba)$')
+        && request.resource.data.title is string && request.resource.data.title.size() > 0 && request.resource.data.title.size() <= 120
+        && request.resource.data.kind in ['movie','tv','video','song']
+        && request.resource.data.showTitle is string && request.resource.data.showTitle.size() <= 120
+        && request.resource.data.season is int && request.resource.data.season >= 0 && request.resource.data.season <= 99
+        && request.resource.data.episode is int && request.resource.data.episode >= 0 && request.resource.data.episode <= 999
+        && request.resource.data.episodeTitle is string && request.resource.data.episodeTitle.size() <= 120
+        && request.resource.data.year is string && request.resource.data.year.size() <= 4
+        && request.resource.data.description is string && request.resource.data.description.size() <= 800
+        && request.resource.data.poster is string && request.resource.data.poster.size() <= 400
+        && request.resource.data.backdrop is string && request.resource.data.backdrop.size() <= 400
+        && request.resource.data.captionUrl == ''
+        && request.resource.data.size is int && request.resource.data.size > 0 && request.resource.data.size <= 107374182400
+        && (!request.resource.data.keys().hasAny(['tmdbId']) || (request.resource.data.tmdbId is int && request.resource.data.tmdbId >= 0 && request.resource.data.tmdbId <= 2147483647))
+        && request.resource.data.createdAt == request.time;
+      allow update: if signedIn() && resource.data.ownerUid == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['captionUrl'])
+        && (request.resource.data.captionUrl == '' || request.resource.data.captionUrl.matches('^https://cnx-cf-media[.]pixlcyd[.]workers[.]dev/media/' + request.auth.uid + '(%2[Ff]|/)[-a-f0-9]{36}[.]vtt$'));
+      allow delete: if signedIn() && resource.data.ownerUid == request.auth.uid;
+      match /captions/{captionId} {
+        allow get,list: if signedIn();
+        allow create: if signedIn() && exists(/databases/$(database)/documents/movies/$(movieId))
+          && request.resource.data.keys().hasOnly(['ownerUid','label','language','url','createdAt'])
+          && request.resource.data.ownerUid == request.auth.uid
+          && request.resource.data.label is string && request.resource.data.label.size() > 0 && request.resource.data.label.size() <= 80
+          && request.resource.data.language in ['en','es','fr','de','pt','und']
+          && request.resource.data.url.matches('^https://cnx-cf-media[.]pixlcyd[.]workers[.]dev/media/' + request.auth.uid + '(%2[Ff]|/)[-a-f0-9]{36}[.]vtt$')
+          && request.resource.data.createdAt == request.time;
+        allow delete: if signedIn() && resource.data.ownerUid == request.auth.uid;
+        allow update: if signedIn() && resource.data.ownerUid == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['label','language','url'])
+          && request.resource.data.label is string && request.resource.data.label.size() > 0 && request.resource.data.label.size() <= 80
+          && request.resource.data.language in ['en','es','fr','de','pt','und']
+          && request.resource.data.url.matches('^https://cnx-cf-media[.]pixlcyd[.]workers[.]dev/media/' + request.auth.uid + '(%2[Ff]|/)[-a-f0-9]{36}[.]vtt$');
+      }
+    }
+
+    match /apps/gh {
+        function validMedia(media) {
+          let item = media;
+          return item.keys().hasOnly(['url','name','type','size','alt','spoiler'])
+            && item.get('alt','').matches('(?s)^.{0,200}$') && item.get('spoiler',false) is bool
+            && item.url.matches('^https://(cnx-gh-media[.]pixlcyd[.]workers[.]dev/media/.+|(media[0-9]*|i)[.]giphy[.]com/.+)$')
+            && item.name.matches('(?s)^.{0,100}$')
+            && item.type.matches('^(image/(jpeg|png|webp|gif)|video/(mp4|webm|quicktime)|audio/(webm|mp4|ogg|mpeg|wav)|application/(pdf|zip|octet-stream)|text/plain)$')
+            && item.size is int && item.size > 0 && item.size <= 536870912;
+        }
+        function validAttachments() {
+          let count = request.resource.data.attachments.size();
+          return request.resource.data.attachments is list && count > 0 && count <= 10
+            && validMedia(request.resource.data.attachments[0])
+            && (count <= 1 || validMedia(request.resource.data.attachments[1]))
+            && (count <= 2 || validMedia(request.resource.data.attachments[2]))
+            && (count <= 3 || validMedia(request.resource.data.attachments[3]))
+            && (count <= 4 || validMedia(request.resource.data.attachments[4]))
+            && (count <= 5 || validMedia(request.resource.data.attachments[5]))
+            && (count <= 6 || validMedia(request.resource.data.attachments[6]))
+            && (count <= 7 || validMedia(request.resource.data.attachments[7]))
+            && (count <= 8 || validMedia(request.resource.data.attachments[8]))
+            && (count <= 9 || validMedia(request.resource.data.attachments[9]))
+          ;
+        }
+        function validReply(data) {
+          let reply = data.get('replyTo',{});
+          return !('replyTo' in data) || (
+            reply.keys().hasOnly(['id','senderUid','senderName','text'])
+            && reply.id.matches('(?s)^.{0,128}$')
+            && reply.senderUid is string
+            && reply.senderName.matches('(?s)^.{0,48}$')
+            && reply.text.matches('(?s)^.{0,180}$'));
+        }
+        function validMessageMedia() {
+          return (!('attachments' in request.resource.data) || validAttachments()) && (!('media' in request.resource.data)
+            || ('attachments' in request.resource.data ? request.resource.data.media == request.resource.data.attachments[0] : validMedia(request.resource.data.media)));
+        }
+        function validReactions(data) {
+          return !('reactions' in data) || (
+            data.reactions is map
+            && data.reactions.keys().hasOnly(['like','heart','laugh','wow','sad','fire','celebrate'])
+            && (!('like' in data.reactions) || (data.reactions.like is list && data.reactions.like.size() <= 100))
+            && (!('heart' in data.reactions) || (data.reactions.heart is list && data.reactions.heart.size() <= 100))
+            && (!('laugh' in data.reactions) || (data.reactions.laugh is list && data.reactions.laugh.size() <= 100))
+            && (!('wow' in data.reactions) || (data.reactions.wow is list && data.reactions.wow.size() <= 100))
+            && (!('sad' in data.reactions) || (data.reactions.sad is list && data.reactions.sad.size() <= 100))
+            && (!('fire' in data.reactions) || (data.reactions.fire is list && data.reactions.fire.size() <= 100))
+            && (!('celebrate' in data.reactions) || (data.reactions.celebrate is list && data.reactions.celebrate.size() <= 100)));
+        }
+    function validInitialReactions(data) {
+      let reactions = data.get('reactions',{});
+      return !('reactions' in data) || (reactions.keys().hasOnly(['like','heart','laugh','wow','sad','fire','celebrate'])
+        && reactions.values().hasOnly([[],[request.auth.uid]]));
+    }
+    function messageReactionsOwn(members,key){let before=resource.data.get('reactions',{}).get(key,[]);let after=request.resource.data.get('reactions',{}).get(key,[]);return after.hasOnly(members)&&after.size()==after.toSet().size()&&before.removeAll([request.auth.uid]).toSet()==after.removeAll([request.auth.uid]).toSet();}
+    function validSharedMessage(data){
+      return data.keys().hasOnly(['senderUid','text','media','attachments','voice','forwarded','createdAt','replyTo','reactions','clientId','clientCreatedAt'])
+        && data.senderUid==request.auth.uid && data.text is string && data.text.size()<=2000
+        && (data.text.size()>0||'media' in data||'attachments' in data)
+        && validMessageMedia() && validReply(data) && validInitialReactions(data)
+        && data.createdAt==request.time && data.clientCreatedAt is int && data.clientCreatedAt>0
+        && (!('voice' in data)||(data.voice is map&&data.voice.keys().hasOnly(['duration','waveform'])&&data.voice.duration is number&&data.voice.duration>0&&data.voice.duration<=310&&data.voice.waveform is list&&data.voice.waveform.size()<=64))
+        && (!('forwarded' in data)||(data.forwarded is map&&data.forwarded.keys().hasOnly(['snapshot','note'])&&data.forwarded.snapshot==true&&(!('note' in data.forwarded)||data.forwarded.note is string&&data.forwarded.note.size()<=500)))
+        ;
+    }
+    function validSharedUpdate(members,canPin){
+      let keys=request.resource.data.diff(resource.data).affectedKeys();
+      return (resource.data.senderUid==request.auth.uid&&keys.hasOnly(['text','editedAt','editHistory'])&&request.resource.data.text is string&&request.resource.data.text.size()>0&&request.resource.data.text.size()<=2000&&request.resource.data.editedAt==request.time)
+        || (canPin&&keys.hasOnly(['pinned'])&&request.resource.data.pinned is bool)
+        || (keys.hasOnly(['reactions'])&&validReactions(request.resource.data)&&messageReactionsOwn(members,'like')&&messageReactionsOwn(members,'heart')&&messageReactionsOwn(members,'laugh')&&messageReactionsOwn(members,'wow')&&messageReactionsOwn(members,'sad')&&messageReactionsOwn(members,'fire')&&messageReactionsOwn(members,'celebrate'));
+    }
+    function signedIn() { return request.auth != null; }
+    function member(data) { return signedIn() && request.auth.uid in data.members; }
+    function pairValid(data) {
+      return data.keys().hasOnly(['members', 'requestedBy', 'status', 'createdAt', 'updatedAt'])
+        && data.members is list && data.members.size() == 2
+        && data.members[0] is string && data.members[1] is string
+        && data.members[0] != data.members[1]
+        && request.auth.uid in data.members
+        && data.requestedBy == request.auth.uid
+        && data.status == 'pending'
+        && data.createdAt == request.time && data.updatedAt == request.time;
+    }
+    match /handles/{handle} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if signedIn()
+        && handle.matches('^[a-z0-9_]{3,20}$')
+        && request.resource.data.keys().hasOnly(['uid', 'createdAt'])
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.createdAt == request.time;
+      allow update, delete: if false;
+    }
+    match /users/{uid} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if signedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['handle','displayName','avatar','avatarPosition','bio','games','bannerColor','bannerImage','discordUserId','presenceState','customStatus','profileGames','favoriteMovies','profileDrawing','lastActiveAt','createdAt'])
+        && request.resource.data.handle is string
+        && request.resource.data.displayName is string
+        && request.resource.data.avatar is string
+        && request.resource.data.bio is string
+        && request.resource.data.bio.size() <= 160
+        && request.resource.data.games is list
+        && (!('bannerColor' in request.resource.data) || request.resource.data.bannerColor.matches('^#[0-9a-fA-F]{6}$'))
+        && (!('bannerImage' in request.resource.data) || request.resource.data.bannerImage == '' || request.resource.data.bannerImage.matches('^https://cnx-gh-media[.]pixlcyd[.]workers[.]dev/media/.+'))
+        && (!('discordUserId' in request.resource.data) || (request.resource.data.discordUserId is string && (request.resource.data.discordUserId == '' || request.resource.data.discordUserId.matches('^[0-9]{17,20}$'))))
+        && (!('profileGames' in request.resource.data) || (request.resource.data.profileGames is list && request.resource.data.profileGames.size() <= 5 && request.resource.data.profileGames.toSet().hasOnly(['tic-tac-toe','connect-four','pong','reversi','memory'])))
+        && (!('favoriteMovies' in request.resource.data) || (request.resource.data.favoriteMovies is list && request.resource.data.favoriteMovies.size() <= 5))
+        && (!('profileDrawing' in request.resource.data) || (request.resource.data.profileDrawing is string && request.resource.data.profileDrawing.size() <= 120000 && (request.resource.data.profileDrawing == '' || request.resource.data.profileDrawing.matches('^data:image/png;base64,[A-Za-z0-9+/=]+$'))))
+        && (!('customStatus' in request.resource.data) || (request.resource.data.customStatus is string && request.resource.data.customStatus.size() <= 100))
+        && (!('presenceState' in request.resource.data) || request.resource.data.presenceState in ['online','away','offline','idle','dnd','invisible'])
+        && (!('lastActiveAt' in request.resource.data) || request.resource.data.lastActiveAt == request.time)
+        && request.resource.data.createdAt == request.time
+        && getAfter(/databases/$(database)/documents/apps/gh/handles/$(request.resource.data.handle)).data.uid == uid;
+      allow update: if signedIn() && request.auth.uid == uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName','avatar','avatarPosition','bio','games','bannerColor','bannerImage','discordUserId','presenceState','customStatus','profileGames','favoriteMovies','profileDrawing','lastActiveAt'])
+        && request.resource.data.bio is string && request.resource.data.bio.size() <= 160
+        && (!('bannerColor' in request.resource.data) || request.resource.data.bannerColor.matches('^#[0-9a-fA-F]{6}$'))
+        && (!('bannerImage' in request.resource.data) || request.resource.data.bannerImage == '' || request.resource.data.bannerImage.matches('^https://cnx-gh-media[.]pixlcyd[.]workers[.]dev/media/.+'))
+        && (!('discordUserId' in request.resource.data) || (request.resource.data.discordUserId is string && (request.resource.data.discordUserId == '' || request.resource.data.discordUserId.matches('^[0-9]{17,20}$'))))
+        && (!('profileGames' in request.resource.data) || (request.resource.data.profileGames is list && request.resource.data.profileGames.size() <= 5 && request.resource.data.profileGames.toSet().hasOnly(['tic-tac-toe','connect-four','pong','reversi','memory'])))
+        && (!('favoriteMovies' in request.resource.data) || (request.resource.data.favoriteMovies is list && request.resource.data.favoriteMovies.size() <= 5))
+        && (!('profileDrawing' in request.resource.data) || (request.resource.data.profileDrawing is string && request.resource.data.profileDrawing.size() <= 120000 && (request.resource.data.profileDrawing == '' || request.resource.data.profileDrawing.matches('^data:image/png;base64,[A-Za-z0-9+/=]+$'))))
+        && (!('customStatus' in request.resource.data) || (request.resource.data.customStatus is string && request.resource.data.customStatus.size() <= 100))
+        && (!('presenceState' in request.resource.data) || request.resource.data.presenceState in ['online','away','offline','idle','dnd','invisible'])
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['lastActiveAt']) || request.resource.data.lastActiveAt == request.time);
+      allow delete: if false;
+    }
+    match /connections/{id} {
+      allow get, list: if member(resource.data);
+      allow create: if signedIn() && pairValid(request.resource.data)
+        && exists(/databases/$(database)/documents/apps/gh/users/$(request.resource.data.members[0]))
+        && exists(/databases/$(database)/documents/apps/gh/users/$(request.resource.data.members[1]));
+      allow update: if member(resource.data)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','updatedAt'])
+        && request.resource.data.updatedAt == request.time
+        && ((resource.data.status == 'pending'
+          && request.auth.uid != resource.data.requestedBy
+          && request.resource.data.status in ['accepted','declined'])
+          || (resource.data.status == 'pending'
+          && request.auth.uid == resource.data.requestedBy
+          && request.resource.data.status == 'cancelled'));
+      allow delete: if false;
+      match /messages/{messageId} {
+        function parent() { return get(/databases/$(database)/documents/apps/gh/connections/$(id)).data; }
+        allow get, list: if member(parent()) && parent().status == 'accepted';
+        allow create: if member(parent()) && parent().status == 'accepted'
+          && request.resource.data.keys().hasOnly(['senderUid','text','media','attachments','voice','forwarded','createdAt','scheduledFor','replyTo','reactions','clientId','clientCreatedAt'])
+          && request.resource.data.senderUid == request.auth.uid
+          && (!('clientId' in request.resource.data) || (request.resource.data.clientId is string && request.resource.data.clientId.size() > 0 && request.resource.data.clientId.size() <= 80))
+          && (!('clientCreatedAt' in request.resource.data) || (request.resource.data.clientCreatedAt is int && request.resource.data.clientCreatedAt > 0))
+          && request.resource.data.text is string
+          && request.resource.data.text.size() <= 2000
+          && (request.resource.data.text.size() > 0 || 'media' in request.resource.data || ('attachments' in request.resource.data && request.resource.data.attachments.size() > 0))
+          && validMessageMedia()
+          && (!('voice' in request.resource.data) || (request.resource.data.voice is map && request.resource.data.voice.keys().hasOnly(['duration','waveform']) && request.resource.data.voice.duration is number && request.resource.data.voice.duration > 0 && request.resource.data.voice.duration <= 310 && request.resource.data.voice.waveform is list && request.resource.data.voice.waveform.size() <= 64))
+          && (!('forwarded' in request.resource.data) || (request.resource.data.forwarded is map && ((request.resource.data.forwarded.keys().hasOnly(['name']) && request.resource.data.forwarded.name is string && request.resource.data.forwarded.name.size() <= 48) || (request.resource.data.forwarded.keys().hasOnly(['snapshot','note']) && request.resource.data.forwarded.snapshot == true && (!('note' in request.resource.data.forwarded) || (request.resource.data.forwarded.note is string && request.resource.data.forwarded.note.size() <= 500))))))
+          && request.resource.data.createdAt == request.time
+          && (!('scheduledFor' in request.resource.data) || (
+            request.resource.data.scheduledFor is timestamp
+            && request.resource.data.scheduledFor > request.time
+            && !('media' in request.resource.data)))
+          && validReply(request.resource.data)
+          && validInitialReactions(request.resource.data);
+        allow update: if member(parent()) && parent().status == 'accepted'
+          && ((resource.data.senderUid == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['text','editedAt','editHistory'])
+            && request.resource.data.text is string
+            && request.resource.data.text.size() > 0 && request.resource.data.text.size() <= 2000
+            && request.resource.data.editedAt == request.time
+            && request.resource.data.editHistory is list && request.resource.data.editHistory.size() > 0 && request.resource.data.editHistory.size() <= 30
+            && request.resource.data.editHistory[request.resource.data.editHistory.size()-1].text == resource.data.text)
+          || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['pinned']) && request.resource.data.pinned is bool)
+          || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reactions'])
+            && validReactions(request.resource.data)
+            && ownReactionChange('like') && ownReactionChange('heart') && ownReactionChange('laugh')
+            && ownReactionChange('wow') && ownReactionChange('sad') && ownReactionChange('fire') && ownReactionChange('celebrate')));
+        allow delete: if member(parent()) && parent().status == 'accepted' && resource.data.senderUid == request.auth.uid;
+        function ownReactionChange(key) {
+          let before = resource.data.get('reactions',{}).get(key,[]);
+          let after = request.resource.data.get('reactions',{}).get(key,[]);
+          return after.toSet().hasOnly(parent().members)
+            && after.size() == after.toSet().size()
+            && before.removeAll([request.auth.uid]).toSet() == after.removeAll([request.auth.uid]).toSet();
+        }
+      }
+      match /receipts/{uid} {
+        function parent() { return get(/databases/$(database)/documents/apps/gh/connections/$(id)).data; }
+        allow get, list: if member(parent()) && parent().status == 'accepted';
+        allow create, update: if member(parent()) && parent().status == 'accepted'
+          && uid == request.auth.uid
+          && request.resource.data.keys().hasOnly(['lastReadAt','lastDeliveredAt','lastReadMessageId','lastDeliveredMessageId'])
+          && (!('lastReadMessageId' in request.resource.data) || (request.resource.data.lastReadMessageId is string && request.resource.data.lastReadMessageId.size() <= 128))
+          && (!('lastDeliveredMessageId' in request.resource.data) || (request.resource.data.lastDeliveredMessageId is string && request.resource.data.lastDeliveredMessageId.size() <= 128))
+          && (!('lastReadAt' in request.resource.data) || request.resource.data.lastReadAt is timestamp)
+          && (!('lastDeliveredAt' in request.resource.data) || request.resource.data.lastDeliveredAt is timestamp)
+          && (('lastReadAt' in request.resource.data && request.resource.data.lastReadAt == request.time) || ('lastDeliveredAt' in request.resource.data && request.resource.data.lastDeliveredAt == request.time));
+        allow delete: if false;
+      }
+      match /typing/{uid} {
+        function parent() { return get(/databases/$(database)/documents/apps/gh/connections/$(id)).data; }
+        allow get, list: if member(parent()) && parent().status == 'accepted';
+        allow create, update: if member(parent()) && parent().status == 'accepted'
+          && uid == request.auth.uid
+          && request.resource.data.keys().hasOnly(['typing','updatedAt'])
+          && request.resource.data.typing is bool
+          && request.resource.data.updatedAt == request.time;
+        allow delete: if false;
+      }
+      match /calls/{callId} {
+        function conversation() { return get(/databases/$(database)/documents/apps/gh/connections/$(id)).data; }
+        allow get, list: if member(conversation());
+        allow create: if member(conversation()) && conversation().status == 'accepted'
+          && request.resource.data.keys().hasOnly(['callerUid','calleeUid','kind','status','offer','createdAt','updatedAt','callerPresent','calleePresent'])
+          && request.resource.data.callerUid == request.auth.uid
+          && request.resource.data.calleeUid in conversation().members
+          && request.resource.data.calleeUid != request.auth.uid
+          && request.resource.data.kind in ['voice','video']
+          && request.resource.data.status == 'ringing'
+          && (!('callerPresent' in request.resource.data) || request.resource.data.callerPresent == true)
+          && (!('calleePresent' in request.resource.data) || request.resource.data.calleePresent == true)
+          && request.resource.data.offer.type == 'offer'
+          && request.resource.data.offer.sdp is string
+          && request.resource.data.offer.sdp.size() < 30000
+          && request.resource.data.createdAt == request.time
+          && request.resource.data.updatedAt == request.time;
+        allow update: if member(conversation()) && conversation().status == 'accepted'
+          && request.resource.data.updatedAt == request.time
+          && ((resource.data.status == 'active'
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([request.auth.uid == resource.data.callerUid ? 'callerHeartbeat' : 'calleeHeartbeat','updatedAt'])
+            && request.resource.data[request.auth.uid == resource.data.callerUid ? 'callerHeartbeat' : 'calleeHeartbeat'] == request.time)
+          || (resource.data.status == 'active'
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['callerPresent','calleePresent','status','rejoinOffer','updatedAt'])
+            && request.resource.data.status in ['active','ended']
+            && (request.auth.uid == resource.data.callerUid ? request.resource.data.get('calleePresent',true) == resource.data.get('calleePresent',true) : request.resource.data.get('callerPresent',true) == resource.data.get('callerPresent',true))
+            && request.resource.data.get('callerPresent',true) is bool && request.resource.data.get('calleePresent',true) is bool
+            && (request.resource.data.status != 'ended' || (request.resource.data.callerPresent == false && request.resource.data.calleePresent == false))
+            && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['rejoinOffer']) || (request.resource.data.rejoinOffer.keys().hasOnly(['uid','sdp','revision','id','deviceId','protocol','preparedAt']) && request.resource.data.rejoinOffer.uid == request.auth.uid && request.resource.data.rejoinOffer.sdp is string && request.resource.data.rejoinOffer.sdp.size() < 30000 && request.resource.data.rejoinOffer.revision == resource.data.get('rejoinOffer',{}).get('revision',0)+1
+              && request.resource.data.rejoinOffer.protocol == 2 && request.resource.data.rejoinOffer.id is string && request.resource.data.rejoinOffer.id.size() <= 80 && request.resource.data.rejoinOffer.deviceId is string && request.resource.data.rejoinOffer.deviceId.size() <= 80
+              && request.resource.data.rejoinOffer.preparedAt == request.time
+              && (resource.data.get('rejoinOffer',{}).get('preparedAt',request.time-duration.value(31,'s'))+duration.value(30,'s') <= request.time || resource.data.get('rejoinCommit',{}).get('revision',-1) == resource.data.get('rejoinOffer',{}).get('revision',0) || resource.data.get('rejoinCancel',{}).get('revision',-1) == resource.data.get('rejoinOffer',{}).get('revision',0)))))
+            || (resource.data.status == 'active' && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['rejoinReady','updatedAt'])
+              && request.auth.uid != resource.data.rejoinOffer.uid && request.resource.data.rejoinReady.keys().hasOnly(['uid','id','revision','at']) && request.resource.data.rejoinReady.uid == request.auth.uid
+              && request.resource.data.rejoinReady.id == resource.data.rejoinOffer.id && request.resource.data.rejoinReady.revision == resource.data.rejoinOffer.revision && request.resource.data.rejoinReady.at == request.time && resource.data.rejoinOffer.preparedAt+duration.value(30,'s') > request.time)
+            || (resource.data.status == 'active' && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['rejoinCommit','updatedAt'])
+              && request.auth.uid == resource.data.rejoinOffer.uid && request.resource.data.rejoinCommit.keys().hasOnly(['uid','id','revision','deviceId','at']) && request.resource.data.rejoinCommit.uid == request.auth.uid
+              && request.resource.data.rejoinCommit.id == resource.data.rejoinOffer.id && request.resource.data.rejoinCommit.revision == resource.data.rejoinOffer.revision && request.resource.data.rejoinCommit.deviceId == resource.data.rejoinOffer.deviceId
+              && request.resource.data.rejoinCommit.at == request.time && resource.data.rejoinOffer.preparedAt+duration.value(30,'s') > request.time && resource.data.rejoinReady.id == resource.data.rejoinOffer.id
+              && resource.data.get('rejoinCancel',{}).get('id','') != resource.data.rejoinOffer.id && resource.data.get('rejoinCommit',{}).get('id','') != resource.data.rejoinOffer.id)
+            || (resource.data.status == 'active' && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['rejoinCancel','updatedAt'])
+              && request.resource.data.rejoinCancel.keys().hasOnly(['uid','id','revision','at']) && request.resource.data.rejoinCancel.uid == request.auth.uid && request.resource.data.rejoinCancel.at == request.time
+              && request.resource.data.rejoinCancel.id == resource.data.rejoinOffer.id && request.resource.data.rejoinCancel.revision == resource.data.rejoinOffer.revision && resource.data.get('rejoinCommit',{}).get('id','') != resource.data.rejoinOffer.id)
+            || (resource.data.status == 'active'
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['rejoinAnswer','updatedAt'])
+            && request.resource.data.rejoinAnswer.keys().hasOnly(['uid','sdp','revision'])
+            && request.resource.data.rejoinAnswer.uid == request.auth.uid && request.auth.uid != resource.data.rejoinOffer.uid
+            && request.resource.data.rejoinAnswer.sdp is string && request.resource.data.rejoinAnswer.sdp.size() < 30000
+            && request.resource.data.rejoinAnswer.revision == resource.data.rejoinOffer.revision)
+            || (resource.data.status == 'ringing'
+            && request.auth.uid == resource.data.calleeUid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','answer','updatedAt'])
+            && request.resource.data.status == 'active'
+            && request.resource.data.answer.type == 'answer'
+            && request.resource.data.answer.sdp is string
+            && request.resource.data.answer.sdp.size() < 30000)
+            || (resource.data.status in ['ringing','active']
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','updatedAt'])
+            && request.resource.data.status == 'ended')
+            || (resource.data.status == 'active' && request.auth.uid == resource.data.callerUid
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['restartOffer','updatedAt'])
+              && request.resource.data.restartOffer.keys().hasOnly(['type','sdp','revision'])
+              && request.resource.data.restartOffer.type == 'offer' && request.resource.data.restartOffer.sdp is string && request.resource.data.restartOffer.sdp.size() < 30000 && request.resource.data.restartOffer.revision is number)
+            || (resource.data.status == 'active' && request.auth.uid == resource.data.calleeUid
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['restartAnswer','updatedAt'])
+              && request.resource.data.restartAnswer.keys().hasOnly(['type','sdp','revision'])
+              && request.resource.data.restartAnswer.type == 'answer' && request.resource.data.restartAnswer.sdp is string && request.resource.data.restartAnswer.sdp.size() < 30000 && request.resource.data.restartAnswer.revision == resource.data.restartOffer.revision)
+            || (resource.data.status == 'active' && request.auth.uid == resource.data.calleeUid
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['restartRequestedAt','updatedAt']) && request.resource.data.restartRequestedAt == request.time));
+        allow delete: if false;
+        match /candidates/{candidateId} {
+          function conversation() { return get(/databases/$(database)/documents/apps/gh/connections/$(id)).data; }
+          allow get, list: if member(conversation());
+          allow create: if member(conversation()) && conversation().status == 'accepted'
+            && request.resource.data.keys().hasOnly(['uid','candidate','sdpMid','sdpMLineIndex','createdAt','epoch'])
+            && request.resource.data.uid == request.auth.uid
+            && (!('epoch' in request.resource.data) || request.resource.data.epoch is number)
+            && request.resource.data.candidate is string
+            && request.resource.data.candidate.size() < 4000
+            && request.resource.data.createdAt == request.time;
+          allow update, delete: if false;
+        }
+        match /movie/{movieId} {
+          function conversation() { return get(/databases/$(database)/documents/apps/gh/connections/$(id)).data; }
+          function call() { return get(/databases/$(database)/documents/apps/gh/connections/$(id)/calls/$(callId)).data; }
+          function validMovie() {
+            return request.resource.data.keys().hasOnly(['url','title','poster','captionUrl','position','playing','controllerUid','updatedAt','intent'])
+              && request.resource.data.url is string
+              && request.resource.data.url.matches('^https://cnx-gh-media[.]pixlcyd[.]workers[.]dev/media/.+[.](mp4|webm|mov|mp3|m4a|wav|ogg|weba)$')
+              && request.resource.data.title is string && request.resource.data.title.size() <= 120
+              && request.resource.data.poster is string && request.resource.data.poster.size() <= 400
+              && request.resource.data.captionUrl is string && request.resource.data.captionUrl.size() <= 400
+              && request.resource.data.position is number && request.resource.data.position >= 0 && request.resource.data.position <= 86400
+              && request.resource.data.playing is bool
+              && request.resource.data.controllerUid == request.auth.uid
+              && (!('intent' in request.resource.data) || request.resource.data.intent in ['select','seek','play','pause','heartbeat'])
+              && request.resource.data.updatedAt == request.time;
+          }
+          allow get, list: if movieId == 'current' && member(conversation()) && conversation().status == 'accepted';
+          allow create, update: if movieId == 'current' && member(conversation()) && conversation().status == 'accepted' && call().status in ['ringing','active'] && validMovie();
+          allow delete: if false;
+        }
+      }
+      match /watch/{watchId} {
+        function conversation() { return get(/databases/$(database)/documents/apps/gh/connections/$(id)).data; }
+        function validWatch() {
+          return request.resource.data.keys().hasOnly(['url','title','position','playing','updatedAt','startedBy'])
+            && request.resource.data.url is string
+            && request.resource.data.url.matches('^https://cnx-gh-media[.]pixlcyd[.]workers[.]dev/media/.+')
+            && request.resource.data.title is string
+            && request.resource.data.title.size() <= 100
+            && request.resource.data.position is number
+            && request.resource.data.position >= 0
+            && request.resource.data.position <= 21600
+            && request.resource.data.playing is bool
+            && request.resource.data.updatedAt == request.time
+            && request.resource.data.startedBy == request.auth.uid;
+        }
+        allow get, list: if watchId == 'current' && member(conversation()) && conversation().status == 'accepted';
+        allow create, update: if watchId == 'current' && member(conversation()) && conversation().status == 'accepted' && validWatch();
+        allow delete: if false;
+      }
+    }
+    match /groups/{groupId} {
+      function groupMember(data) { return signedIn() && request.auth.uid in data.members; }
+      function groupAdmin(data) { return groupMember(data) && (request.auth.uid == data.ownerUid || request.auth.uid in data.admins); }
+      function validGroup(data) {
+        return data.keys().hasOnly(['name','ownerUid','admins','members','createdAt','updatedAt'])
+          && data.name is string && data.name.size() >= 2 && data.name.size() <= 40
+          && data.ownerUid is string
+          && data.members is list && data.members.size() >= 1 && data.members.size() <= 20
+          && data.admins is list && data.admins.size() >= 1 && data.admins.size() <= data.members.size()
+          && data.ownerUid in data.members && data.ownerUid in data.admins
+          && data.members.hasAll(data.admins);
+      }
+      allow get, list: if groupMember(resource.data);
+      allow create: if signedIn() && validGroup(request.resource.data)
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.members.size() >= 2
+        && request.resource.data.members[0] == request.auth.uid
+        && request.resource.data.admins == [request.auth.uid]
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+      allow update: if groupMember(resource.data) && validGroup(request.resource.data)
+        && request.resource.data.ownerUid == resource.data.ownerUid
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedAt == request.time
+        && (
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['updatedAt'])
+          || (request.auth.uid == resource.data.ownerUid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name','admins','members','updatedAt']))
+          || (groupAdmin(resource.data)
+            && request.resource.data.admins == resource.data.admins
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name','members','updatedAt']))
+          || (request.auth.uid != resource.data.ownerUid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['admins','members','updatedAt'])
+            && !(request.auth.uid in request.resource.data.members)
+            && request.resource.data.members.toSet() == resource.data.members.toSet().difference([request.auth.uid].toSet())
+            && request.resource.data.admins.toSet() == resource.data.admins.toSet().difference([request.auth.uid].toSet()))
+        );
+      allow delete: if false;
+      match /watch/{watchId} {
+        function group(){return get(/databases/$(database)/documents/apps/gh/groups/$(groupId)).data;}
+        allow get,list: if groupMember(group());
+        allow create,update: if watchId == 'current' && groupMember(group())
+          && request.resource.data.keys().hasOnly(['url','title','poster','captionUrl','position','playing','controllerUid','updatedAt','intent'])
+          && request.resource.data.url is string && request.resource.data.url.matches('^https://cnx-gh-media[.]pixlcyd[.]workers[.]dev/media/.+[.](mp4|webm|mov|mp3|m4a|wav|ogg|weba)$')
+          && request.resource.data.title is string && request.resource.data.title.size() <= 120
+          && request.resource.data.poster is string && request.resource.data.poster.size() <= 400
+          && request.resource.data.captionUrl is string && request.resource.data.captionUrl.size() <= 400
+          && request.resource.data.position is number && request.resource.data.position >= 0 && request.resource.data.position <= 86400
+          && request.resource.data.playing is bool && request.resource.data.controllerUid == request.auth.uid
+          && request.resource.data.intent in ['select','seek','play','pause','heartbeat'] && request.resource.data.updatedAt == request.time;
+        allow delete: if false;
+      }
+      match /messages/{messageId} {
+        function group() { return get(/databases/$(database)/documents/apps/gh/groups/$(groupId)).data; }
+        allow get, list: if groupMember(group());
+        allow create: if groupMember(group()) && validSharedMessage(request.resource.data);
+        allow update: if groupMember(group()) && validSharedUpdate(group().members,true);
+          allow delete: if groupMember(group()) && (resource.data.senderUid == request.auth.uid || groupAdmin(group()));
+      }
+    }
+    match /servers/{serverId} {
+      function serverMember(data) { return signedIn() && request.auth.uid in data.members; }
+      function serverAdmin(data) { return serverMember(data) && (request.auth.uid == data.ownerUid || request.auth.uid in data.admins); }
+      function validServer(data) {
+        return data.keys().hasOnly(['name','ownerUid','admins','members','createdAt','updatedAt'])
+          && data.name is string && data.name.size() >= 2 && data.name.size() <= 40
+          && data.ownerUid is string
+          && data.members is list && data.members.size() >= 1 && data.members.size() <= 100
+          && data.admins is list && data.admins.size() >= 1 && data.admins.size() <= data.members.size()
+          && data.ownerUid in data.members && data.ownerUid in data.admins
+          && data.members.hasAll(data.admins);
+      }
+      allow get, list: if serverMember(resource.data);
+      allow create: if signedIn() && validServer(request.resource.data)
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.members[0] == request.auth.uid
+        && request.resource.data.admins == [request.auth.uid]
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+      allow update: if serverMember(resource.data) && validServer(request.resource.data)
+        && request.resource.data.ownerUid == resource.data.ownerUid
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedAt == request.time
+        && (
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['updatedAt'])
+          || (request.auth.uid == resource.data.ownerUid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name','admins','members','updatedAt']))
+          || (serverAdmin(resource.data)
+            && request.resource.data.admins == resource.data.admins
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name','members','updatedAt']))
+          || (request.auth.uid != resource.data.ownerUid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['admins','members','updatedAt'])
+            && !(request.auth.uid in request.resource.data.members)
+            && request.resource.data.members.toSet() == resource.data.members.toSet().difference([request.auth.uid].toSet())
+            && request.resource.data.admins.toSet() == resource.data.admins.toSet().difference([request.auth.uid].toSet()))
+        );
+      allow delete: if false;
+      match /channels/{channelId} {
+        function server() { return get(/databases/$(database)/documents/apps/gh/servers/$(serverId)).data; }
+        allow get, list: if serverMember(server());
+        allow create: if serverAdmin(server())
+          && request.resource.data.keys().hasOnly(['name','position','createdBy','createdAt'])
+          && request.resource.data.name is string && request.resource.data.name.size() >= 1 && request.resource.data.name.size() <= 30
+          && request.resource.data.position is number
+          && request.resource.data.createdBy == request.auth.uid
+          && request.resource.data.createdAt == request.time;
+        allow update: if serverAdmin(server())
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name','position'])
+          && request.resource.data.name is string && request.resource.data.name.size() >= 1 && request.resource.data.name.size() <= 30
+          && request.resource.data.position is number;
+        allow delete: if false;
+        match /messages/{messageId} {
+          function serverForMessage() { return get(/databases/$(database)/documents/apps/gh/servers/$(serverId)).data; }
+          allow get, list: if serverMember(serverForMessage());
+          allow create: if serverMember(serverForMessage()) && validSharedMessage(request.resource.data);
+        allow update: if serverMember(serverForMessage()) && validSharedUpdate(serverForMessage().members,serverAdmin(serverForMessage()));
+          allow delete: if serverMember(serverForMessage()) && (resource.data.senderUid == request.auth.uid || serverAdmin(serverForMessage()));
+        }
+      }
+    }
+    match /movies/{movieId} {
+      allow get, list: if signedIn();
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['ownerUid','url','title','kind','showTitle','season','episode','episodeTitle','year','description','poster','backdrop','captionUrl','size','tmdbId','createdAt'])
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.url.matches('^https://cnx-gh-media[.]pixlcyd[.]workers[.]dev/media/' + request.auth.uid + '(%2[Ff]|/)[-a-f0-9]{36}[.](mp4|webm|mov|mp3|m4a|wav|ogg|weba)$')
+        && request.resource.data.title is string && request.resource.data.title.size() > 0 && request.resource.data.title.size() <= 120
+        && request.resource.data.kind in ['movie','tv','video','song']
+        && request.resource.data.showTitle is string && request.resource.data.showTitle.size() <= 120
+        && request.resource.data.season is int && request.resource.data.season >= 0 && request.resource.data.season <= 99
+        && request.resource.data.episode is int && request.resource.data.episode >= 0 && request.resource.data.episode <= 999
+        && request.resource.data.episodeTitle is string && request.resource.data.episodeTitle.size() <= 120
+        && request.resource.data.year is string && request.resource.data.year.size() <= 4
+        && request.resource.data.description is string && request.resource.data.description.size() <= 800
+        && request.resource.data.poster is string && request.resource.data.poster.size() <= 400
+        && request.resource.data.backdrop is string && request.resource.data.backdrop.size() <= 400
+        && request.resource.data.captionUrl == ''
+        && request.resource.data.size is int && request.resource.data.size > 0 && request.resource.data.size <= 107374182400
+        && (!request.resource.data.keys().hasAny(['tmdbId']) || (request.resource.data.tmdbId is int && request.resource.data.tmdbId >= 0 && request.resource.data.tmdbId <= 2147483647))
+        && request.resource.data.createdAt == request.time;
+      allow update: if signedIn() && resource.data.ownerUid == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['captionUrl'])
+        && (request.resource.data.captionUrl == '' || request.resource.data.captionUrl.matches('^https://cnx-gh-media[.]pixlcyd[.]workers[.]dev/media/' + request.auth.uid + '(%2[Ff]|/)[-a-f0-9]{36}[.]vtt$'));
+      allow delete: if signedIn() && resource.data.ownerUid == request.auth.uid;
+      match /captions/{captionId} {
+        allow get,list: if signedIn();
+        allow create: if signedIn() && exists(/databases/$(database)/documents/apps/gh/movies/$(movieId))
+          && request.resource.data.keys().hasOnly(['ownerUid','label','language','url','createdAt'])
+          && request.resource.data.ownerUid == request.auth.uid
+          && request.resource.data.label is string && request.resource.data.label.size() > 0 && request.resource.data.label.size() <= 80
+          && request.resource.data.language in ['en','es','fr','de','pt','und']
+          && request.resource.data.url.matches('^https://cnx-gh-media[.]pixlcyd[.]workers[.]dev/media/' + request.auth.uid + '(%2[Ff]|/)[-a-f0-9]{36}[.]vtt$')
+          && request.resource.data.createdAt == request.time;
+        allow delete: if signedIn() && resource.data.ownerUid == request.auth.uid;
+        allow update: if signedIn() && resource.data.ownerUid == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['label','language','url'])
+          && request.resource.data.label is string && request.resource.data.label.size() > 0 && request.resource.data.label.size() <= 80
+          && request.resource.data.language in ['en','es','fr','de','pt','und']
+          && request.resource.data.url.matches('^https://cnx-gh-media[.]pixlcyd[.]workers[.]dev/media/' + request.auth.uid + '(%2[Ff]|/)[-a-f0-9]{36}[.]vtt$');
+      }
+    }
+    }
+
+    match /apps/rd {
+        function validMedia(media) {
+          let item = media;
+          return item.keys().hasOnly(['url','name','type','size','alt','spoiler'])
+            && item.get('alt','').matches('(?s)^.{0,200}$') && item.get('spoiler',false) is bool
+            && item.url.matches('^https://(cnx-rd-media[.]pixlcyd[.]workers[.]dev/media/.+|(media[0-9]*|i)[.]giphy[.]com/.+)$')
+            && item.name.matches('(?s)^.{0,100}$')
+            && item.type.matches('^(image/(jpeg|png|webp|gif)|video/(mp4|webm|quicktime)|audio/(webm|mp4|ogg|mpeg|wav)|application/(pdf|zip|octet-stream)|text/plain)$')
+            && item.size is int && item.size > 0 && item.size <= 536870912;
+        }
+        function validAttachments() {
+          let count = request.resource.data.attachments.size();
+          return request.resource.data.attachments is list && count > 0 && count <= 10
+            && validMedia(request.resource.data.attachments[0])
+            && (count <= 1 || validMedia(request.resource.data.attachments[1]))
+            && (count <= 2 || validMedia(request.resource.data.attachments[2]))
+            && (count <= 3 || validMedia(request.resource.data.attachments[3]))
+            && (count <= 4 || validMedia(request.resource.data.attachments[4]))
+            && (count <= 5 || validMedia(request.resource.data.attachments[5]))
+            && (count <= 6 || validMedia(request.resource.data.attachments[6]))
+            && (count <= 7 || validMedia(request.resource.data.attachments[7]))
+            && (count <= 8 || validMedia(request.resource.data.attachments[8]))
+            && (count <= 9 || validMedia(request.resource.data.attachments[9]))
+          ;
+        }
+        function validReply(data) {
+          let reply = data.get('replyTo',{});
+          return !('replyTo' in data) || (
+            reply.keys().hasOnly(['id','senderUid','senderName','text'])
+            && reply.id.matches('(?s)^.{0,128}$')
+            && reply.senderUid is string
+            && reply.senderName.matches('(?s)^.{0,48}$')
+            && reply.text.matches('(?s)^.{0,180}$'));
+        }
+        function validMessageMedia() {
+          return (!('attachments' in request.resource.data) || validAttachments()) && (!('media' in request.resource.data)
+            || ('attachments' in request.resource.data ? request.resource.data.media == request.resource.data.attachments[0] : validMedia(request.resource.data.media)));
+        }
+        function validReactions(data) {
+          return !('reactions' in data) || (
+            data.reactions is map
+            && data.reactions.keys().hasOnly(['like','heart','laugh','wow','sad','fire','celebrate'])
+            && (!('like' in data.reactions) || (data.reactions.like is list && data.reactions.like.size() <= 100))
+            && (!('heart' in data.reactions) || (data.reactions.heart is list && data.reactions.heart.size() <= 100))
+            && (!('laugh' in data.reactions) || (data.reactions.laugh is list && data.reactions.laugh.size() <= 100))
+            && (!('wow' in data.reactions) || (data.reactions.wow is list && data.reactions.wow.size() <= 100))
+            && (!('sad' in data.reactions) || (data.reactions.sad is list && data.reactions.sad.size() <= 100))
+            && (!('fire' in data.reactions) || (data.reactions.fire is list && data.reactions.fire.size() <= 100))
+            && (!('celebrate' in data.reactions) || (data.reactions.celebrate is list && data.reactions.celebrate.size() <= 100)));
+        }
+    function validInitialReactions(data) {
+      let reactions = data.get('reactions',{});
+      return !('reactions' in data) || (reactions.keys().hasOnly(['like','heart','laugh','wow','sad','fire','celebrate'])
+        && reactions.values().hasOnly([[],[request.auth.uid]]));
+    }
+    function messageReactionsOwn(members,key){let before=resource.data.get('reactions',{}).get(key,[]);let after=request.resource.data.get('reactions',{}).get(key,[]);return after.hasOnly(members)&&after.size()==after.toSet().size()&&before.removeAll([request.auth.uid]).toSet()==after.removeAll([request.auth.uid]).toSet();}
+    function validSharedMessage(data){
+      return data.keys().hasOnly(['senderUid','text','media','attachments','voice','forwarded','createdAt','replyTo','reactions','clientId','clientCreatedAt'])
+        && data.senderUid==request.auth.uid && data.text is string && data.text.size()<=2000
+        && (data.text.size()>0||'media' in data||'attachments' in data)
+        && validMessageMedia() && validReply(data) && validInitialReactions(data)
+        && data.createdAt==request.time && data.clientCreatedAt is int && data.clientCreatedAt>0
+        && (!('voice' in data)||(data.voice is map&&data.voice.keys().hasOnly(['duration','waveform'])&&data.voice.duration is number&&data.voice.duration>0&&data.voice.duration<=310&&data.voice.waveform is list&&data.voice.waveform.size()<=64))
+        && (!('forwarded' in data)||(data.forwarded is map&&data.forwarded.keys().hasOnly(['snapshot','note'])&&data.forwarded.snapshot==true&&(!('note' in data.forwarded)||data.forwarded.note is string&&data.forwarded.note.size()<=500)))
+        ;
+    }
+    function validSharedUpdate(members,canPin){
+      let keys=request.resource.data.diff(resource.data).affectedKeys();
+      return (resource.data.senderUid==request.auth.uid&&keys.hasOnly(['text','editedAt','editHistory'])&&request.resource.data.text is string&&request.resource.data.text.size()>0&&request.resource.data.text.size()<=2000&&request.resource.data.editedAt==request.time)
+        || (canPin&&keys.hasOnly(['pinned'])&&request.resource.data.pinned is bool)
+        || (keys.hasOnly(['reactions'])&&validReactions(request.resource.data)&&messageReactionsOwn(members,'like')&&messageReactionsOwn(members,'heart')&&messageReactionsOwn(members,'laugh')&&messageReactionsOwn(members,'wow')&&messageReactionsOwn(members,'sad')&&messageReactionsOwn(members,'fire')&&messageReactionsOwn(members,'celebrate'));
+    }
+    function signedIn() { return request.auth != null; }
+    function member(data) { return signedIn() && request.auth.uid in data.members; }
+    function pairValid(data) {
+      return data.keys().hasOnly(['members', 'requestedBy', 'status', 'createdAt', 'updatedAt'])
+        && data.members is list && data.members.size() == 2
+        && data.members[0] is string && data.members[1] is string
+        && data.members[0] != data.members[1]
+        && request.auth.uid in data.members
+        && data.requestedBy == request.auth.uid
+        && data.status == 'pending'
+        && data.createdAt == request.time && data.updatedAt == request.time;
+    }
+    match /handles/{handle} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if signedIn()
+        && handle.matches('^[a-z0-9_]{3,20}$')
+        && request.resource.data.keys().hasOnly(['uid', 'createdAt'])
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.createdAt == request.time;
+      allow update, delete: if false;
+    }
+    match /users/{uid} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if signedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['handle','displayName','avatar','avatarPosition','bio','games','bannerColor','bannerImage','discordUserId','presenceState','customStatus','profileGames','favoriteMovies','profileDrawing','lastActiveAt','createdAt'])
+        && request.resource.data.handle is string
+        && request.resource.data.displayName is string
+        && request.resource.data.avatar is string
+        && request.resource.data.bio is string
+        && request.resource.data.bio.size() <= 160
+        && request.resource.data.games is list
+        && (!('bannerColor' in request.resource.data) || request.resource.data.bannerColor.matches('^#[0-9a-fA-F]{6}$'))
+        && (!('bannerImage' in request.resource.data) || request.resource.data.bannerImage == '' || request.resource.data.bannerImage.matches('^https://cnx-rd-media[.]pixlcyd[.]workers[.]dev/media/.+'))
+        && (!('discordUserId' in request.resource.data) || (request.resource.data.discordUserId is string && (request.resource.data.discordUserId == '' || request.resource.data.discordUserId.matches('^[0-9]{17,20}$'))))
+        && (!('profileGames' in request.resource.data) || (request.resource.data.profileGames is list && request.resource.data.profileGames.size() <= 5 && request.resource.data.profileGames.toSet().hasOnly(['tic-tac-toe','connect-four','pong','reversi','memory'])))
+        && (!('favoriteMovies' in request.resource.data) || (request.resource.data.favoriteMovies is list && request.resource.data.favoriteMovies.size() <= 5))
+        && (!('profileDrawing' in request.resource.data) || (request.resource.data.profileDrawing is string && request.resource.data.profileDrawing.size() <= 120000 && (request.resource.data.profileDrawing == '' || request.resource.data.profileDrawing.matches('^data:image/png;base64,[A-Za-z0-9+/=]+$'))))
+        && (!('customStatus' in request.resource.data) || (request.resource.data.customStatus is string && request.resource.data.customStatus.size() <= 100))
+        && (!('presenceState' in request.resource.data) || request.resource.data.presenceState in ['online','away','offline','idle','dnd','invisible'])
+        && (!('lastActiveAt' in request.resource.data) || request.resource.data.lastActiveAt == request.time)
+        && request.resource.data.createdAt == request.time
+        && getAfter(/databases/$(database)/documents/apps/rd/handles/$(request.resource.data.handle)).data.uid == uid;
+      allow update: if signedIn() && request.auth.uid == uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName','avatar','avatarPosition','bio','games','bannerColor','bannerImage','discordUserId','presenceState','customStatus','profileGames','favoriteMovies','profileDrawing','lastActiveAt'])
+        && request.resource.data.bio is string && request.resource.data.bio.size() <= 160
+        && (!('bannerColor' in request.resource.data) || request.resource.data.bannerColor.matches('^#[0-9a-fA-F]{6}$'))
+        && (!('bannerImage' in request.resource.data) || request.resource.data.bannerImage == '' || request.resource.data.bannerImage.matches('^https://cnx-rd-media[.]pixlcyd[.]workers[.]dev/media/.+'))
+        && (!('discordUserId' in request.resource.data) || (request.resource.data.discordUserId is string && (request.resource.data.discordUserId == '' || request.resource.data.discordUserId.matches('^[0-9]{17,20}$'))))
+        && (!('profileGames' in request.resource.data) || (request.resource.data.profileGames is list && request.resource.data.profileGames.size() <= 5 && request.resource.data.profileGames.toSet().hasOnly(['tic-tac-toe','connect-four','pong','reversi','memory'])))
+        && (!('favoriteMovies' in request.resource.data) || (request.resource.data.favoriteMovies is list && request.resource.data.favoriteMovies.size() <= 5))
+        && (!('profileDrawing' in request.resource.data) || (request.resource.data.profileDrawing is string && request.resource.data.profileDrawing.size() <= 120000 && (request.resource.data.profileDrawing == '' || request.resource.data.profileDrawing.matches('^data:image/png;base64,[A-Za-z0-9+/=]+$'))))
+        && (!('customStatus' in request.resource.data) || (request.resource.data.customStatus is string && request.resource.data.customStatus.size() <= 100))
+        && (!('presenceState' in request.resource.data) || request.resource.data.presenceState in ['online','away','offline','idle','dnd','invisible'])
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['lastActiveAt']) || request.resource.data.lastActiveAt == request.time);
+      allow delete: if false;
+    }
+    match /connections/{id} {
+      allow get, list: if member(resource.data);
+      allow create: if signedIn() && pairValid(request.resource.data)
+        && exists(/databases/$(database)/documents/apps/rd/users/$(request.resource.data.members[0]))
+        && exists(/databases/$(database)/documents/apps/rd/users/$(request.resource.data.members[1]));
+      allow update: if member(resource.data)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','updatedAt'])
+        && request.resource.data.updatedAt == request.time
+        && ((resource.data.status == 'pending'
+          && request.auth.uid != resource.data.requestedBy
+          && request.resource.data.status in ['accepted','declined'])
+          || (resource.data.status == 'pending'
+          && request.auth.uid == resource.data.requestedBy
+          && request.resource.data.status == 'cancelled'));
+      allow delete: if false;
+      match /messages/{messageId} {
+        function parent() { return get(/databases/$(database)/documents/apps/rd/connections/$(id)).data; }
+        allow get, list: if member(parent()) && parent().status == 'accepted';
+        allow create: if member(parent()) && parent().status == 'accepted'
+          && request.resource.data.keys().hasOnly(['senderUid','text','media','attachments','voice','forwarded','createdAt','scheduledFor','replyTo','reactions','clientId','clientCreatedAt'])
+          && request.resource.data.senderUid == request.auth.uid
+          && (!('clientId' in request.resource.data) || (request.resource.data.clientId is string && request.resource.data.clientId.size() > 0 && request.resource.data.clientId.size() <= 80))
+          && (!('clientCreatedAt' in request.resource.data) || (request.resource.data.clientCreatedAt is int && request.resource.data.clientCreatedAt > 0))
+          && request.resource.data.text is string
+          && request.resource.data.text.size() <= 2000
+          && (request.resource.data.text.size() > 0 || 'media' in request.resource.data || ('attachments' in request.resource.data && request.resource.data.attachments.size() > 0))
+          && validMessageMedia()
+          && (!('voice' in request.resource.data) || (request.resource.data.voice is map && request.resource.data.voice.keys().hasOnly(['duration','waveform']) && request.resource.data.voice.duration is number && request.resource.data.voice.duration > 0 && request.resource.data.voice.duration <= 310 && request.resource.data.voice.waveform is list && request.resource.data.voice.waveform.size() <= 64))
+          && (!('forwarded' in request.resource.data) || (request.resource.data.forwarded is map && ((request.resource.data.forwarded.keys().hasOnly(['name']) && request.resource.data.forwarded.name is string && request.resource.data.forwarded.name.size() <= 48) || (request.resource.data.forwarded.keys().hasOnly(['snapshot','note']) && request.resource.data.forwarded.snapshot == true && (!('note' in request.resource.data.forwarded) || (request.resource.data.forwarded.note is string && request.resource.data.forwarded.note.size() <= 500))))))
+          && request.resource.data.createdAt == request.time
+          && (!('scheduledFor' in request.resource.data) || (
+            request.resource.data.scheduledFor is timestamp
+            && request.resource.data.scheduledFor > request.time
+            && !('media' in request.resource.data)))
+          && validReply(request.resource.data)
+          && validInitialReactions(request.resource.data);
+        allow update: if member(parent()) && parent().status == 'accepted'
+          && ((resource.data.senderUid == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['text','editedAt','editHistory'])
+            && request.resource.data.text is string
+            && request.resource.data.text.size() > 0 && request.resource.data.text.size() <= 2000
+            && request.resource.data.editedAt == request.time
+            && request.resource.data.editHistory is list && request.resource.data.editHistory.size() > 0 && request.resource.data.editHistory.size() <= 30
+            && request.resource.data.editHistory[request.resource.data.editHistory.size()-1].text == resource.data.text)
+          || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['pinned']) && request.resource.data.pinned is bool)
+          || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reactions'])
+            && validReactions(request.resource.data)
+            && ownReactionChange('like') && ownReactionChange('heart') && ownReactionChange('laugh')
+            && ownReactionChange('wow') && ownReactionChange('sad') && ownReactionChange('fire') && ownReactionChange('celebrate')));
+        allow delete: if member(parent()) && parent().status == 'accepted' && resource.data.senderUid == request.auth.uid;
+        function ownReactionChange(key) {
+          let before = resource.data.get('reactions',{}).get(key,[]);
+          let after = request.resource.data.get('reactions',{}).get(key,[]);
+          return after.toSet().hasOnly(parent().members)
+            && after.size() == after.toSet().size()
+            && before.removeAll([request.auth.uid]).toSet() == after.removeAll([request.auth.uid]).toSet();
+        }
+      }
+      match /receipts/{uid} {
+        function parent() { return get(/databases/$(database)/documents/apps/rd/connections/$(id)).data; }
+        allow get, list: if member(parent()) && parent().status == 'accepted';
+        allow create, update: if member(parent()) && parent().status == 'accepted'
+          && uid == request.auth.uid
+          && request.resource.data.keys().hasOnly(['lastReadAt','lastDeliveredAt','lastReadMessageId','lastDeliveredMessageId'])
+          && (!('lastReadMessageId' in request.resource.data) || (request.resource.data.lastReadMessageId is string && request.resource.data.lastReadMessageId.size() <= 128))
+          && (!('lastDeliveredMessageId' in request.resource.data) || (request.resource.data.lastDeliveredMessageId is string && request.resource.data.lastDeliveredMessageId.size() <= 128))
+          && (!('lastReadAt' in request.resource.data) || request.resource.data.lastReadAt is timestamp)
+          && (!('lastDeliveredAt' in request.resource.data) || request.resource.data.lastDeliveredAt is timestamp)
+          && (('lastReadAt' in request.resource.data && request.resource.data.lastReadAt == request.time) || ('lastDeliveredAt' in request.resource.data && request.resource.data.lastDeliveredAt == request.time));
+        allow delete: if false;
+      }
+      match /typing/{uid} {
+        function parent() { return get(/databases/$(database)/documents/apps/rd/connections/$(id)).data; }
+        allow get, list: if member(parent()) && parent().status == 'accepted';
+        allow create, update: if member(parent()) && parent().status == 'accepted'
+          && uid == request.auth.uid
+          && request.resource.data.keys().hasOnly(['typing','updatedAt'])
+          && request.resource.data.typing is bool
+          && request.resource.data.updatedAt == request.time;
+        allow delete: if false;
+      }
+      match /calls/{callId} {
+        function conversation() { return get(/databases/$(database)/documents/apps/rd/connections/$(id)).data; }
+        allow get, list: if member(conversation());
+        allow create: if member(conversation()) && conversation().status == 'accepted'
+          && request.resource.data.keys().hasOnly(['callerUid','calleeUid','kind','status','offer','createdAt','updatedAt','callerPresent','calleePresent'])
+          && request.resource.data.callerUid == request.auth.uid
+          && request.resource.data.calleeUid in conversation().members
+          && request.resource.data.calleeUid != request.auth.uid
+          && request.resource.data.kind in ['voice','video']
+          && request.resource.data.status == 'ringing'
+          && (!('callerPresent' in request.resource.data) || request.resource.data.callerPresent == true)
+          && (!('calleePresent' in request.resource.data) || request.resource.data.calleePresent == true)
+          && request.resource.data.offer.type == 'offer'
+          && request.resource.data.offer.sdp is string
+          && request.resource.data.offer.sdp.size() < 30000
+          && request.resource.data.createdAt == request.time
+          && request.resource.data.updatedAt == request.time;
+        allow update: if member(conversation()) && conversation().status == 'accepted'
+          && request.resource.data.updatedAt == request.time
+          && ((resource.data.status == 'active'
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([request.auth.uid == resource.data.callerUid ? 'callerHeartbeat' : 'calleeHeartbeat','updatedAt'])
+            && request.resource.data[request.auth.uid == resource.data.callerUid ? 'callerHeartbeat' : 'calleeHeartbeat'] == request.time)
+          || (resource.data.status == 'active'
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['callerPresent','calleePresent','status','rejoinOffer','updatedAt'])
+            && request.resource.data.status in ['active','ended']
+            && (request.auth.uid == resource.data.callerUid ? request.resource.data.get('calleePresent',true) == resource.data.get('calleePresent',true) : request.resource.data.get('callerPresent',true) == resource.data.get('callerPresent',true))
+            && request.resource.data.get('callerPresent',true) is bool && request.resource.data.get('calleePresent',true) is bool
+            && (request.resource.data.status != 'ended' || (request.resource.data.callerPresent == false && request.resource.data.calleePresent == false))
+            && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['rejoinOffer']) || (request.resource.data.rejoinOffer.keys().hasOnly(['uid','sdp','revision','id','deviceId','protocol','preparedAt']) && request.resource.data.rejoinOffer.uid == request.auth.uid && request.resource.data.rejoinOffer.sdp is string && request.resource.data.rejoinOffer.sdp.size() < 30000 && request.resource.data.rejoinOffer.revision == resource.data.get('rejoinOffer',{}).get('revision',0)+1
+              && request.resource.data.rejoinOffer.protocol == 2 && request.resource.data.rejoinOffer.id is string && request.resource.data.rejoinOffer.id.size() <= 80 && request.resource.data.rejoinOffer.deviceId is string && request.resource.data.rejoinOffer.deviceId.size() <= 80
+              && request.resource.data.rejoinOffer.preparedAt == request.time
+              && (resource.data.get('rejoinOffer',{}).get('preparedAt',request.time-duration.value(31,'s'))+duration.value(30,'s') <= request.time || resource.data.get('rejoinCommit',{}).get('revision',-1) == resource.data.get('rejoinOffer',{}).get('revision',0) || resource.data.get('rejoinCancel',{}).get('revision',-1) == resource.data.get('rejoinOffer',{}).get('revision',0)))))
+            || (resource.data.status == 'active' && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['rejoinReady','updatedAt'])
+              && request.auth.uid != resource.data.rejoinOffer.uid && request.resource.data.rejoinReady.keys().hasOnly(['uid','id','revision','at']) && request.resource.data.rejoinReady.uid == request.auth.uid
+              && request.resource.data.rejoinReady.id == resource.data.rejoinOffer.id && request.resource.data.rejoinReady.revision == resource.data.rejoinOffer.revision && request.resource.data.rejoinReady.at == request.time && resource.data.rejoinOffer.preparedAt+duration.value(30,'s') > request.time)
+            || (resource.data.status == 'active' && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['rejoinCommit','updatedAt'])
+              && request.auth.uid == resource.data.rejoinOffer.uid && request.resource.data.rejoinCommit.keys().hasOnly(['uid','id','revision','deviceId','at']) && request.resource.data.rejoinCommit.uid == request.auth.uid
+              && request.resource.data.rejoinCommit.id == resource.data.rejoinOffer.id && request.resource.data.rejoinCommit.revision == resource.data.rejoinOffer.revision && request.resource.data.rejoinCommit.deviceId == resource.data.rejoinOffer.deviceId
+              && request.resource.data.rejoinCommit.at == request.time && resource.data.rejoinOffer.preparedAt+duration.value(30,'s') > request.time && resource.data.rejoinReady.id == resource.data.rejoinOffer.id
+              && resource.data.get('rejoinCancel',{}).get('id','') != resource.data.rejoinOffer.id && resource.data.get('rejoinCommit',{}).get('id','') != resource.data.rejoinOffer.id)
+            || (resource.data.status == 'active' && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['rejoinCancel','updatedAt'])
+              && request.resource.data.rejoinCancel.keys().hasOnly(['uid','id','revision','at']) && request.resource.data.rejoinCancel.uid == request.auth.uid && request.resource.data.rejoinCancel.at == request.time
+              && request.resource.data.rejoinCancel.id == resource.data.rejoinOffer.id && request.resource.data.rejoinCancel.revision == resource.data.rejoinOffer.revision && resource.data.get('rejoinCommit',{}).get('id','') != resource.data.rejoinOffer.id)
+            || (resource.data.status == 'active'
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['rejoinAnswer','updatedAt'])
+            && request.resource.data.rejoinAnswer.keys().hasOnly(['uid','sdp','revision'])
+            && request.resource.data.rejoinAnswer.uid == request.auth.uid && request.auth.uid != resource.data.rejoinOffer.uid
+            && request.resource.data.rejoinAnswer.sdp is string && request.resource.data.rejoinAnswer.sdp.size() < 30000
+            && request.resource.data.rejoinAnswer.revision == resource.data.rejoinOffer.revision)
+            || (resource.data.status == 'ringing'
+            && request.auth.uid == resource.data.calleeUid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','answer','updatedAt'])
+            && request.resource.data.status == 'active'
+            && request.resource.data.answer.type == 'answer'
+            && request.resource.data.answer.sdp is string
+            && request.resource.data.answer.sdp.size() < 30000)
+            || (resource.data.status in ['ringing','active']
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','updatedAt'])
+            && request.resource.data.status == 'ended')
+            || (resource.data.status == 'active' && request.auth.uid == resource.data.callerUid
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['restartOffer','updatedAt'])
+              && request.resource.data.restartOffer.keys().hasOnly(['type','sdp','revision'])
+              && request.resource.data.restartOffer.type == 'offer' && request.resource.data.restartOffer.sdp is string && request.resource.data.restartOffer.sdp.size() < 30000 && request.resource.data.restartOffer.revision is number)
+            || (resource.data.status == 'active' && request.auth.uid == resource.data.calleeUid
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['restartAnswer','updatedAt'])
+              && request.resource.data.restartAnswer.keys().hasOnly(['type','sdp','revision'])
+              && request.resource.data.restartAnswer.type == 'answer' && request.resource.data.restartAnswer.sdp is string && request.resource.data.restartAnswer.sdp.size() < 30000 && request.resource.data.restartAnswer.revision == resource.data.restartOffer.revision)
+            || (resource.data.status == 'active' && request.auth.uid == resource.data.calleeUid
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['restartRequestedAt','updatedAt']) && request.resource.data.restartRequestedAt == request.time));
+        allow delete: if false;
+        match /candidates/{candidateId} {
+          function conversation() { return get(/databases/$(database)/documents/apps/rd/connections/$(id)).data; }
+          allow get, list: if member(conversation());
+          allow create: if member(conversation()) && conversation().status == 'accepted'
+            && request.resource.data.keys().hasOnly(['uid','candidate','sdpMid','sdpMLineIndex','createdAt','epoch'])
+            && request.resource.data.uid == request.auth.uid
+            && (!('epoch' in request.resource.data) || request.resource.data.epoch is number)
+            && request.resource.data.candidate is string
+            && request.resource.data.candidate.size() < 4000
+            && request.resource.data.createdAt == request.time;
+          allow update, delete: if false;
+        }
+        match /movie/{movieId} {
+          function conversation() { return get(/databases/$(database)/documents/apps/rd/connections/$(id)).data; }
+          function call() { return get(/databases/$(database)/documents/apps/rd/connections/$(id)/calls/$(callId)).data; }
+          function validMovie() {
+            return request.resource.data.keys().hasOnly(['url','title','poster','captionUrl','position','playing','controllerUid','updatedAt','intent'])
+              && request.resource.data.url is string
+              && request.resource.data.url.matches('^https://cnx-rd-media[.]pixlcyd[.]workers[.]dev/media/.+[.](mp4|webm|mov|mp3|m4a|wav|ogg|weba)$')
+              && request.resource.data.title is string && request.resource.data.title.size() <= 120
+              && request.resource.data.poster is string && request.resource.data.poster.size() <= 400
+              && request.resource.data.captionUrl is string && request.resource.data.captionUrl.size() <= 400
+              && request.resource.data.position is number && request.resource.data.position >= 0 && request.resource.data.position <= 86400
+              && request.resource.data.playing is bool
+              && request.resource.data.controllerUid == request.auth.uid
+              && (!('intent' in request.resource.data) || request.resource.data.intent in ['select','seek','play','pause','heartbeat'])
+              && request.resource.data.updatedAt == request.time;
+          }
+          allow get, list: if movieId == 'current' && member(conversation()) && conversation().status == 'accepted';
+          allow create, update: if movieId == 'current' && member(conversation()) && conversation().status == 'accepted' && call().status in ['ringing','active'] && validMovie();
+          allow delete: if false;
+        }
+      }
+      match /watch/{watchId} {
+        function conversation() { return get(/databases/$(database)/documents/apps/rd/connections/$(id)).data; }
+        function validWatch() {
+          return request.resource.data.keys().hasOnly(['url','title','position','playing','updatedAt','startedBy'])
+            && request.resource.data.url is string
+            && request.resource.data.url.matches('^https://cnx-rd-media[.]pixlcyd[.]workers[.]dev/media/.+')
+            && request.resource.data.title is string
+            && request.resource.data.title.size() <= 100
+            && request.resource.data.position is number
+            && request.resource.data.position >= 0
+            && request.resource.data.position <= 21600
+            && request.resource.data.playing is bool
+            && request.resource.data.updatedAt == request.time
+            && request.resource.data.startedBy == request.auth.uid;
+        }
+        allow get, list: if watchId == 'current' && member(conversation()) && conversation().status == 'accepted';
+        allow create, update: if watchId == 'current' && member(conversation()) && conversation().status == 'accepted' && validWatch();
+        allow delete: if false;
+      }
+    }
+    match /groups/{groupId} {
+      function groupMember(data) { return signedIn() && request.auth.uid in data.members; }
+      function groupAdmin(data) { return groupMember(data) && (request.auth.uid == data.ownerUid || request.auth.uid in data.admins); }
+      function validGroup(data) {
+        return data.keys().hasOnly(['name','ownerUid','admins','members','createdAt','updatedAt'])
+          && data.name is string && data.name.size() >= 2 && data.name.size() <= 40
+          && data.ownerUid is string
+          && data.members is list && data.members.size() >= 1 && data.members.size() <= 20
+          && data.admins is list && data.admins.size() >= 1 && data.admins.size() <= data.members.size()
+          && data.ownerUid in data.members && data.ownerUid in data.admins
+          && data.members.hasAll(data.admins);
+      }
+      allow get, list: if groupMember(resource.data);
+      allow create: if signedIn() && validGroup(request.resource.data)
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.members.size() >= 2
+        && request.resource.data.members[0] == request.auth.uid
+        && request.resource.data.admins == [request.auth.uid]
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+      allow update: if groupMember(resource.data) && validGroup(request.resource.data)
+        && request.resource.data.ownerUid == resource.data.ownerUid
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedAt == request.time
+        && (
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['updatedAt'])
+          || (request.auth.uid == resource.data.ownerUid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name','admins','members','updatedAt']))
+          || (groupAdmin(resource.data)
+            && request.resource.data.admins == resource.data.admins
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name','members','updatedAt']))
+          || (request.auth.uid != resource.data.ownerUid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['admins','members','updatedAt'])
+            && !(request.auth.uid in request.resource.data.members)
+            && request.resource.data.members.toSet() == resource.data.members.toSet().difference([request.auth.uid].toSet())
+            && request.resource.data.admins.toSet() == resource.data.admins.toSet().difference([request.auth.uid].toSet()))
+        );
+      allow delete: if false;
+      match /watch/{watchId} {
+        function group(){return get(/databases/$(database)/documents/apps/rd/groups/$(groupId)).data;}
+        allow get,list: if groupMember(group());
+        allow create,update: if watchId == 'current' && groupMember(group())
+          && request.resource.data.keys().hasOnly(['url','title','poster','captionUrl','position','playing','controllerUid','updatedAt','intent'])
+          && request.resource.data.url is string && request.resource.data.url.matches('^https://cnx-rd-media[.]pixlcyd[.]workers[.]dev/media/.+[.](mp4|webm|mov|mp3|m4a|wav|ogg|weba)$')
+          && request.resource.data.title is string && request.resource.data.title.size() <= 120
+          && request.resource.data.poster is string && request.resource.data.poster.size() <= 400
+          && request.resource.data.captionUrl is string && request.resource.data.captionUrl.size() <= 400
+          && request.resource.data.position is number && request.resource.data.position >= 0 && request.resource.data.position <= 86400
+          && request.resource.data.playing is bool && request.resource.data.controllerUid == request.auth.uid
+          && request.resource.data.intent in ['select','seek','play','pause','heartbeat'] && request.resource.data.updatedAt == request.time;
+        allow delete: if false;
+      }
+      match /messages/{messageId} {
+        function group() { return get(/databases/$(database)/documents/apps/rd/groups/$(groupId)).data; }
+        allow get, list: if groupMember(group());
+        allow create: if groupMember(group()) && validSharedMessage(request.resource.data);
+        allow update: if groupMember(group()) && validSharedUpdate(group().members,true);
+          allow delete: if groupMember(group()) && (resource.data.senderUid == request.auth.uid || groupAdmin(group()));
+      }
+    }
+    match /servers/{serverId} {
+      function serverMember(data) { return signedIn() && request.auth.uid in data.members; }
+      function serverAdmin(data) { return serverMember(data) && (request.auth.uid == data.ownerUid || request.auth.uid in data.admins); }
+      function validServer(data) {
+        return data.keys().hasOnly(['name','ownerUid','admins','members','createdAt','updatedAt'])
+          && data.name is string && data.name.size() >= 2 && data.name.size() <= 40
+          && data.ownerUid is string
+          && data.members is list && data.members.size() >= 1 && data.members.size() <= 100
+          && data.admins is list && data.admins.size() >= 1 && data.admins.size() <= data.members.size()
+          && data.ownerUid in data.members && data.ownerUid in data.admins
+          && data.members.hasAll(data.admins);
+      }
+      allow get, list: if serverMember(resource.data);
+      allow create: if signedIn() && validServer(request.resource.data)
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.members[0] == request.auth.uid
+        && request.resource.data.admins == [request.auth.uid]
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+      allow update: if serverMember(resource.data) && validServer(request.resource.data)
+        && request.resource.data.ownerUid == resource.data.ownerUid
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedAt == request.time
+        && (
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['updatedAt'])
+          || (request.auth.uid == resource.data.ownerUid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name','admins','members','updatedAt']))
+          || (serverAdmin(resource.data)
+            && request.resource.data.admins == resource.data.admins
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name','members','updatedAt']))
+          || (request.auth.uid != resource.data.ownerUid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['admins','members','updatedAt'])
+            && !(request.auth.uid in request.resource.data.members)
+            && request.resource.data.members.toSet() == resource.data.members.toSet().difference([request.auth.uid].toSet())
+            && request.resource.data.admins.toSet() == resource.data.admins.toSet().difference([request.auth.uid].toSet()))
+        );
+      allow delete: if false;
+      match /channels/{channelId} {
+        function server() { return get(/databases/$(database)/documents/apps/rd/servers/$(serverId)).data; }
+        allow get, list: if serverMember(server());
+        allow create: if serverAdmin(server())
+          && request.resource.data.keys().hasOnly(['name','position','createdBy','createdAt'])
+          && request.resource.data.name is string && request.resource.data.name.size() >= 1 && request.resource.data.name.size() <= 30
+          && request.resource.data.position is number
+          && request.resource.data.createdBy == request.auth.uid
+          && request.resource.data.createdAt == request.time;
+        allow update: if serverAdmin(server())
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name','position'])
+          && request.resource.data.name is string && request.resource.data.name.size() >= 1 && request.resource.data.name.size() <= 30
+          && request.resource.data.position is number;
+        allow delete: if false;
+        match /messages/{messageId} {
+          function serverForMessage() { return get(/databases/$(database)/documents/apps/rd/servers/$(serverId)).data; }
+          allow get, list: if serverMember(serverForMessage());
+          allow create: if serverMember(serverForMessage()) && validSharedMessage(request.resource.data);
+        allow update: if serverMember(serverForMessage()) && validSharedUpdate(serverForMessage().members,serverAdmin(serverForMessage()));
+          allow delete: if serverMember(serverForMessage()) && (resource.data.senderUid == request.auth.uid || serverAdmin(serverForMessage()));
+        }
+      }
+    }
+    match /movies/{movieId} {
+      allow get, list: if signedIn();
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['ownerUid','url','title','kind','showTitle','season','episode','episodeTitle','year','description','poster','backdrop','captionUrl','size','tmdbId','createdAt'])
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.url.matches('^https://cnx-rd-media[.]pixlcyd[.]workers[.]dev/media/' + request.auth.uid + '(%2[Ff]|/)[-a-f0-9]{36}[.](mp4|webm|mov|mp3|m4a|wav|ogg|weba)$')
+        && request.resource.data.title is string && request.resource.data.title.size() > 0 && request.resource.data.title.size() <= 120
+        && request.resource.data.kind in ['movie','tv','video','song']
+        && request.resource.data.showTitle is string && request.resource.data.showTitle.size() <= 120
+        && request.resource.data.season is int && request.resource.data.season >= 0 && request.resource.data.season <= 99
+        && request.resource.data.episode is int && request.resource.data.episode >= 0 && request.resource.data.episode <= 999
+        && request.resource.data.episodeTitle is string && request.resource.data.episodeTitle.size() <= 120
+        && request.resource.data.year is string && request.resource.data.year.size() <= 4
+        && request.resource.data.description is string && request.resource.data.description.size() <= 800
+        && request.resource.data.poster is string && request.resource.data.poster.size() <= 400
+        && request.resource.data.backdrop is string && request.resource.data.backdrop.size() <= 400
+        && request.resource.data.captionUrl == ''
+        && request.resource.data.size is int && request.resource.data.size > 0 && request.resource.data.size <= 107374182400
+        && (!request.resource.data.keys().hasAny(['tmdbId']) || (request.resource.data.tmdbId is int && request.resource.data.tmdbId >= 0 && request.resource.data.tmdbId <= 2147483647))
+        && request.resource.data.createdAt == request.time;
+      allow update: if signedIn() && resource.data.ownerUid == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['captionUrl'])
+        && (request.resource.data.captionUrl == '' || request.resource.data.captionUrl.matches('^https://cnx-rd-media[.]pixlcyd[.]workers[.]dev/media/' + request.auth.uid + '(%2[Ff]|/)[-a-f0-9]{36}[.]vtt$'));
+      allow delete: if signedIn() && resource.data.ownerUid == request.auth.uid;
+      match /captions/{captionId} {
+        allow get,list: if signedIn();
+        allow create: if signedIn() && exists(/databases/$(database)/documents/apps/rd/movies/$(movieId))
+          && request.resource.data.keys().hasOnly(['ownerUid','label','language','url','createdAt'])
+          && request.resource.data.ownerUid == request.auth.uid
+          && request.resource.data.label is string && request.resource.data.label.size() > 0 && request.resource.data.label.size() <= 80
+          && request.resource.data.language in ['en','es','fr','de','pt','und']
+          && request.resource.data.url.matches('^https://cnx-rd-media[.]pixlcyd[.]workers[.]dev/media/' + request.auth.uid + '(%2[Ff]|/)[-a-f0-9]{36}[.]vtt$')
+          && request.resource.data.createdAt == request.time;
+        allow delete: if signedIn() && resource.data.ownerUid == request.auth.uid;
+        allow update: if signedIn() && resource.data.ownerUid == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['label','language','url'])
+          && request.resource.data.label is string && request.resource.data.label.size() > 0 && request.resource.data.label.size() <= 80
+          && request.resource.data.language in ['en','es','fr','de','pt','und']
+          && request.resource.data.url.matches('^https://cnx-rd-media[.]pixlcyd[.]workers[.]dev/media/' + request.auth.uid + '(%2[Ff]|/)[-a-f0-9]{36}[.]vtt$');
+      }
+    }
+    }
+  }
+}
