@@ -1,9 +1,12 @@
 {
-  "version": "18.9.1",
-  "builtAt": "2026-10-05T21:47:50.952Z",
+  "version": "18.9.2",
+  "builtAt": "2026-10-07T22:40:25.235Z",
   "changes": [
-    "Deployment-scoped media validation repairs failed image messages",
-    "File selection preserves its original conversation and account",
-    "Upload a file supports photos, videos and ordinary audio"
+    "Portrait PWA drawer, viewport and composer fit repairs",
+    "Clear Solo Watch and one fullscreen control per call or film",
+    "Film fullscreen restores camera and glassy chat overlays",
+    "Heartbeats adjust playback rate without automatic backward seeks",
+    "Large artwork metadata streams correctly, verified with Ted S2E04",
+    "Camera activation during voice calls negotiates sending direction"
   ]
 }
