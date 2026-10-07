@@ -1,12 +1,12 @@
 {
-  "version": "18.9.2",
-  "builtAt": "2026-10-07T22:40:25.235Z",
+  "version": "18.9.3",
+  "builtAt": "2026-10-07T22:57:54.620Z",
   "changes": [
-    "Portrait PWA drawer, viewport and composer fit repairs",
-    "Clear Solo Watch and one fullscreen control per call or film",
-    "Film fullscreen restores camera and glassy chat overlays",
-    "Heartbeats adjust playback rate without automatic backward seeks",
-    "Large artwork metadata streams correctly, verified with Ted S2E04",
-    "Camera activation during voice calls negotiates sending direction"
+    "Join, Rejoin and Call again use the accent color; Leave call remains red",
+    "Streaming decoder startup excludes embedded cover art and descriptive tags while preserving audio/video setup",
+    "Touch seek previews do not start a second native scan of the film",
+    "Managed streaming refill handles startstreaming, bufferedchange and waiting events",
+    "Playback failures provide Copy playback details and an actionable Retry control",
+    "Actual Ted S2E04 plays in Chrome with a 1196-byte decoder init; physical iPhone confirmation pending"
   ]
 }
