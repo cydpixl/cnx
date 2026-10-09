@@ -6,17 +6,18 @@ const CACHE = OWNER+(self.__CONNECTIONS_SHELL__?.version || 'development');
 const STATE = 'connections-notification-state:'+encodeURIComponent(BASE.pathname);
 const shellURL = path => new URL(path,BASE).href;
 const shellPaths = self.__CONNECTIONS_SHELL__?.files || ['./','mark.svg','manifest.webmanifest','v9-extras.js','v9-extras.css','giphy-config.js'];
-self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(shellPaths.map(shellURL)))));
-// Wait for old clients to close, preserving ongoing calls/uploads and their original chunks.
-self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key.startsWith(OWNER)&&key!==CACHE).map(key=>caches.delete(key))))));
+self.addEventListener('install',event=>event.waitUntil((async()=>{const cache=await caches.open(CACHE);await cache.addAll(shellPaths.map(shellURL));await self.skipWaiting();})()));
+// Apply the new fetch policy without reloading calls. Keep prior chunks for
+// tabs still running an earlier release; account storage is never cleared.
+self.addEventListener('activate',event=>event.waitUntil((async()=>{const old=(await caches.keys()).filter(key=>key.startsWith(OWNER)&&key!==CACHE);await Promise.all(old.slice(0,-2).map(key=>caches.delete(key)));await self.clients.claim();})()));
 self.addEventListener('fetch',event=>{
  const url=new URL(event.request.url);
  if(event.request.method!=='GET'||url.origin!==BASE.origin||!url.pathname.startsWith(BASE.pathname))return;
  const relative=url.pathname.slice(BASE.pathname.length);
  if(relative.startsWith('src/')||relative.startsWith('@')||relative.startsWith('node_modules/'))return;
- if(event.request.mode==='navigate')event.respondWith(caches.open(CACHE).then(async cache=>(await cache.match(shellURL('./'))) || fetch(event.request)));
+ if(event.request.mode==='navigate')event.respondWith((async()=>{const cache=await caches.open(CACHE);try{const response=await fetch(event.request,{cache:'no-store'});if(response.ok){await cache.put(shellURL('./'),response.clone());return response;}const saved=await cache.match(shellURL('./'));return saved||response;}catch(error){const saved=await cache.match(shellURL('./'));if(saved)return saved;throw error;}})());
  else if(relative.startsWith('assets/')||relative.startsWith('avatars/')||relative.startsWith('coloring/')||['mark.svg','manifest.webmanifest','v9-extras.js','v9-extras.css','giphy-config.js'].includes(relative))event.respondWith(caches.open(CACHE).then(async cache=>{
-  const hit=await cache.match(event.request,{ignoreSearch:true});if(hit)return hit;
+  const hit=await cache.match(event.request,{ignoreSearch:true});if(hit)return hit;if(relative.startsWith('assets/'))for(const name of (await caches.keys()).filter(name=>name.startsWith(OWNER)&&name!==CACHE)){const saved=await(await caches.open(name)).match(event.request,{ignoreSearch:true});if(saved)return saved;}
   const response=await fetch(event.request);if(response.ok)await cache.put(event.request,response.clone());return response;
  }));
 });
@@ -32,7 +33,7 @@ self.addEventListener('notificationclick',event=>{
 });
 const readKey=(conversation,account='')=>new Request(shellURL('__read/'+encodeURIComponent(account)+"/cnx/"+encodeURIComponent(conversation)));
 self.addEventListener('message',event=>{
- const data=event.data;if(data?.type!=='conversation-read'||!data.conversationId)return;
+ const data=event.data;if(data?.type==='shell-version'){event.ports[0]?.postMessage({version:self.__CONNECTIONS_SHELL__?.version});return;}if(data?.type!=='conversation-read'||!data.conversationId)return;
  event.waitUntil((async()=>{
   const cache=await caches.open(STATE),key=readKey(data.conversationId,data.accountId),prior=await cache.match(key),previous=prior?await prior.json():null,readAt=data.readAt||Date.now();
   if(!previous||readAt>=previous.readAt)await cache.put(key,new Response(JSON.stringify({messageId:data.messageId,readAt})));
