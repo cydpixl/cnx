@@ -868,6 +868,29 @@ service cloud.firestore {
             && request.resource.data.admins.toSet() == resource.data.admins.toSet().difference([request.auth.uid].toSet()))
         );
       allow delete: if false;
+
+      match /callParticipants/{uid} {
+        function group(){return get(/databases/$(database)/documents/apps/gh/groups/$(groupId)).data;}
+        function validParticipant(){let data=request.resource.data;return data.keys().hasOnly(['uid','session','camera','muted','screenStream','updatedAt'])
+          && data.uid==request.auth.uid && data.session is string && data.session.matches('^[a-f0-9-]{36}$')
+          && data.camera is bool && data.muted is bool && data.screenStream is string && data.screenStream.size()<=128 && data.updatedAt==request.time;}
+        allow get,list: if groupMember(group());
+        allow create,update: if groupMember(group()) && uid==request.auth.uid && validParticipant();
+        allow delete: if groupMember(group()) && uid==request.auth.uid;
+      }
+      match /callSignals/{signalId} {
+        function group(){return get(/databases/$(database)/documents/apps/gh/groups/$(groupId)).data;}
+        function validSignal(){let data=request.resource.data;return data.keys().hasOnly(['fromUid','fromSession','toUid','toSession','type','payload','createdAt'])
+          && data.fromUid==request.auth.uid && data.toUid is string && data.toUid in group().members && data.toUid!=request.auth.uid
+          && data.fromSession is string && data.fromSession.matches('^[a-f0-9-]{36}$') && data.toSession is string && data.toSession.matches('^[a-f0-9-]{36}$')
+          && get(/databases/$(database)/documents/apps/gh/groups/$(groupId)/callParticipants/$(data.fromUid)).data.session==data.fromSession
+          && get(/databases/$(database)/documents/apps/gh/groups/$(groupId)/callParticipants/$(data.toUid)).data.session==data.toSession
+          && data.type in ['offer','answer','candidate'] && data.payload is string && data.payload.size()>0 && data.payload.size()<=131072 && data.createdAt==request.time;}
+        allow get,list: if groupMember(group()) && resource.data.toUid==request.auth.uid;
+        allow create: if groupMember(group()) && validSignal();
+        allow update: if false;
+        allow delete: if groupMember(group()) && (resource.data.fromUid==request.auth.uid || resource.data.toUid==request.auth.uid);
+      }
       match /watch/{watchId} {
         function group(){return get(/databases/$(database)/documents/apps/gh/groups/$(groupId)).data;}
         allow get,list: if groupMember(group());
