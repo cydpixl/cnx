@@ -1,13 +1,15 @@
 {
-  "version": "18.9.4",
-  "builtAt": "2026-10-09T05:13:50.847Z",
+  "version": "18.9.5",
+  "builtAt": "2026-10-09T05:27:44.499Z",
   "changes": [
     "Restores the original GitHub chat backend, account namespace and avatar paths",
     "Screen sharing targets 1920 x 1080 at 60 fps with smooth native WebRTC playback",
     "Shared screens render correctly for the sharer and viewer, with fullscreen controls",
-    "Tap the purple camera for a photo or hold either capture control for three seconds for a clip",
+    "Click Photo for a picture, click Clip to record, or hold Photo for three seconds to start a clip",
     "Photos and clips reach the original call conversation; controls keep working after hangup and new calls",
     "Chat library supports media type, sender and filename filters with full media previews",
-    "Movie fullscreen keeps your friend camera visible; Enter opens translucent chat"
+    "Movie fullscreen keeps call cameras visible; Enter opens translucent chat",
+    "Group voice and video calls support camera, mute, deafen, screen sharing, fullscreen and rejoining",
+    "Group chat library filters images and videos by type, sender and filename"
   ]
 }
