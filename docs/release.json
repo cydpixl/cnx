@@ -1,12 +1,8 @@
 {
   "version": "18.9.3",
-  "builtAt": "2026-10-07T22:57:54.620Z",
+  "builtAt": "2026-10-09T04:17:26.0956505Z",
   "changes": [
-    "Join, Rejoin and Call again use the accent color; Leave call remains red",
-    "Streaming decoder startup excludes embedded cover art and descriptive tags while preserving audio/video setup",
-    "Touch seek previews do not start a second native scan of the film",
-    "Managed streaming refill handles startstreaming, bufferedchange and waiting events",
-    "Playback failures provide Copy playback details and an actionable Retry control",
-    "Actual Ted S2E04 plays in Chrome with a 1196-byte decoder init; physical iPhone confirmation pending"
+    "Screen sharing shows a private local preview and a clear Sharing state after negotiation",
+    "Local and remote shared-screen tiles have a dedicated fullscreen control"
   ]
 }
