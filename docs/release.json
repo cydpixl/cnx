@@ -1,10 +1,11 @@
 {
   "version": "18.9.3",
-  "builtAt": "2026-10-09T04:20:21.6654040Z",
+  "builtAt": "2026-10-09T04:22:25.4456832Z",
   "changes": [
     "Screen share has a private local preview, Sharing status, 30 fps capture tuning, and fullscreen for both screen tiles",
     "Take a remote camera photo or hold the clip control for 3 seconds to record",
     "Call clips stop at the configurable 10 to 60 second limit and send to chat",
-    "Call Chat library shows conversation photos and videos with filters"
+    "Call Chat library shows conversation photos and videos with filters",
+    "Call captures always send to the conversation belonging to that call, even if another view is opened"
   ]
 }
