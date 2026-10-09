@@ -1,11 +1,12 @@
 {
   "version": "18.9.3",
-  "builtAt": "2026-10-09T04:22:25.4456832Z",
+  "builtAt": "2026-10-07T22:57:54.620Z",
   "changes": [
-    "Screen share has a private local preview, Sharing status, 30 fps capture tuning, and fullscreen for both screen tiles",
-    "Take a remote camera photo or hold the clip control for 3 seconds to record",
-    "Call clips stop at the configurable 10 to 60 second limit and send to chat",
-    "Call Chat library shows conversation photos and videos with filters",
-    "Call captures always send to the conversation belonging to that call, even if another view is opened"
+    "Join, Rejoin and Call again use the accent color; Leave call remains red",
+    "Streaming decoder startup excludes embedded cover art and descriptive tags while preserving audio/video setup",
+    "Touch seek previews do not start a second native scan of the film",
+    "Managed streaming refill handles startstreaming, bufferedchange and waiting events",
+    "Playback failures provide Copy playback details and an actionable Retry control",
+    "Actual Ted S2E04 plays in Chrome with a 1196-byte decoder init; physical iPhone confirmation pending"
   ]
 }
