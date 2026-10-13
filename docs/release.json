@@ -1,6 +1,6 @@
 {
   "version": "19.0.0",
-  "builtAt": "2026-10-13T20:37:11.723Z",
+  "builtAt": "2026-10-13T20:39:55.209Z",
   "changes": [
     "Rejoin occupied calls and transfer them between signed-in devices using the same session",
     "Atomic call reservations prevent simultaneous dialing from creating duplicate calls",
