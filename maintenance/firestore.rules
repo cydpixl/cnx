@@ -625,6 +625,16 @@ service cloud.firestore {
         && (!('presenceState' in request.resource.data) || request.resource.data.presenceState in ['online','away','offline','idle','dnd','invisible'])
         && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['lastActiveAt']) || request.resource.data.lastActiveAt == request.time);
       allow delete: if false;
+      match /watched/{titleId} {
+        allow read: if signedIn() && request.auth.uid == uid;
+        allow create, update: if signedIn() && request.auth.uid == uid
+          && request.resource.data.keys().hasAll(['watched','at','title','automatic'])
+          && request.resource.data.keys().hasOnly(['watched','at','title','automatic'])
+          && request.resource.data.watched is bool && request.resource.data.automatic is bool
+          && request.resource.data.at is number && request.resource.data.at > 0
+          && request.resource.data.title is string && request.resource.data.title.size() <= 300;
+        allow delete: if signedIn() && request.auth.uid == uid;
+      }
     }
     match /connections/{id} {
       allow get, list: if member(resource.data);
@@ -707,18 +717,38 @@ service cloud.firestore {
           && request.resource.data.updatedAt == request.time;
         allow delete: if false;
       }
+      match /callSessions/{slot} {
+        function conversation() { return get(/databases/$(database)/documents/apps/gh/connections/$(id)).data; }
+        function oldCall() { return get(/databases/$(database)/documents/apps/gh/connections/$(id)/calls/$(resource.data.callId)).data; }
+        function liveSide(data,side) { return data.get(side+'Present',true) && data.get(side+'Heartbeat',data.updatedAt)+duration.value(70,'s') > request.time; }
+        function inactive() {
+          let data=oldCall();
+          return data.status=='ended' || (data.status=='ringing' && data.createdAt+duration.value(90,'s') <= request.time)
+            || (data.status=='active' && !liveSide(data,'caller') && !liveSide(data,'callee'));
+        }
+        allow get: if member(conversation());
+        allow create, update: if slot=='current' && member(conversation()) && conversation().status=='accepted'
+          && request.resource.data.keys().hasOnly(['callId','updatedAt'])
+          && request.resource.data.callId is string && request.resource.data.callId.size() <= 128
+          && request.resource.data.updatedAt==request.time
+          && getAfter(/databases/$(database)/documents/apps/gh/connections/$(id)/calls/$(request.resource.data.callId)).data.callerUid==request.auth.uid
+          && getAfter(/databases/$(database)/documents/apps/gh/connections/$(id)/calls/$(request.resource.data.callId)).data.status=='ringing'
+          && (!exists(/databases/$(database)/documents/apps/gh/connections/$(id)/callSessions/$(slot)) || inactive());
+        allow list, delete: if false;
+      }
       match /calls/{callId} {
         function conversation() { return get(/databases/$(database)/documents/apps/gh/connections/$(id)).data; }
         allow get, list: if member(conversation());
         allow create: if member(conversation()) && conversation().status == 'accepted'
-          && request.resource.data.keys().hasOnly(['callerUid','calleeUid','kind','status','offer','createdAt','updatedAt','callerPresent','calleePresent'])
+          && request.resource.data.keys().hasOnly(['callerUid','calleeUid','kind','status','offer','createdAt','updatedAt','callerPresent','calleePresent','callerHeartbeat'])
           && request.resource.data.callerUid == request.auth.uid
           && request.resource.data.calleeUid in conversation().members
           && request.resource.data.calleeUid != request.auth.uid
           && request.resource.data.kind in ['voice','video']
           && request.resource.data.status == 'ringing'
           && (!('callerPresent' in request.resource.data) || request.resource.data.callerPresent == true)
-          && (!('calleePresent' in request.resource.data) || request.resource.data.calleePresent == true)
+          && (!('calleePresent' in request.resource.data) || request.resource.data.calleePresent is bool)
+          && (!('callerHeartbeat' in request.resource.data) || request.resource.data.callerHeartbeat == request.time)
           && request.resource.data.offer.type == 'offer'
           && request.resource.data.offer.sdp is string
           && request.resource.data.offer.sdp.size() < 30000
@@ -727,6 +757,16 @@ service cloud.firestore {
         allow update: if member(conversation()) && conversation().status == 'accepted'
           && request.resource.data.updatedAt == request.time
           && ((resource.data.status == 'active'
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['soloHandoff',request.auth.uid == resource.data.callerUid ? 'callerPresent' : 'calleePresent',request.auth.uid == resource.data.callerUid ? 'callerHeartbeat' : 'calleeHeartbeat','updatedAt'])
+            && request.resource.data.soloHandoff.keys().hasOnly(['uid','deviceId','revision','at'])
+            && request.resource.data.soloHandoff.uid == request.auth.uid && request.resource.data.soloHandoff.deviceId is string && request.resource.data.soloHandoff.deviceId.size() <= 80
+            && request.resource.data.soloHandoff.revision == resource.data.get('soloHandoff',{}).get('revision',0)+1 && request.resource.data.soloHandoff.at == request.time
+            && request.resource.data[request.auth.uid == resource.data.callerUid ? 'callerPresent' : 'calleePresent'] == true
+            && request.resource.data[request.auth.uid == resource.data.callerUid ? 'callerHeartbeat' : 'calleeHeartbeat'] == request.time
+            && (request.auth.uid == resource.data.callerUid
+              ? (resource.data.get('calleePresent',true) == false || resource.data.get('calleeHeartbeat',resource.data.updatedAt)+duration.value(70,'s') <= request.time)
+              : (resource.data.get('callerPresent',true) == false || resource.data.get('callerHeartbeat',resource.data.updatedAt)+duration.value(70,'s') <= request.time)))
+          || (resource.data.status == 'active'
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly([request.auth.uid == resource.data.callerUid ? 'callerHeartbeat' : 'calleeHeartbeat','updatedAt'])
             && request.resource.data[request.auth.uid == resource.data.callerUid ? 'callerHeartbeat' : 'calleeHeartbeat'] == request.time)
           || (resource.data.status == 'active'
@@ -758,8 +798,10 @@ service cloud.firestore {
             && request.resource.data.rejoinAnswer.revision == resource.data.rejoinOffer.revision)
             || (resource.data.status == 'ringing'
             && request.auth.uid == resource.data.calleeUid
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','answer','updatedAt'])
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','answer','updatedAt','calleePresent','calleeHeartbeat'])
             && request.resource.data.status == 'active'
+            && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['calleePresent']) || request.resource.data.calleePresent == true)
+            && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['calleeHeartbeat']) || request.resource.data.calleeHeartbeat == request.time)
             && request.resource.data.answer.type == 'answer'
             && request.resource.data.answer.sdp is string
             && request.resource.data.answer.sdp.size() < 30000)
