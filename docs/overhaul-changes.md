@@ -1,3 +1,13 @@
+# Connections 19.2 — calls and API playback
+
+- Incoming calls show one green Join call button; media controls appear after joining.
+- Calls keep Mic, Camera, Share screen, Apps and Leave visible. More contains the secondary controls.
+- During a connected one-to-one call, catalog Watch now offers Watch together or Watch alone. The friend accepts Join playback.
+- CineSrc and MoviesAPI share play, pause, seek, speed and episode changes using the existing authenticated WebRTC connection. Loading waits for both players and controls can be used by either viewer.
+- Source choice stays fixed within a shared session so both viewers use the same version. Watch alone leaves sync while preserving the call.
+- Existing uploaded-film playback, rooms, accounts and backend namespace remain intact.
+- Verified with separate authenticated browser clients, actual Endgame playback through both sources, and the existing 25-check call/messaging/uploaded-playback regression.
+
 # Connections 19 — overhaul and repair list
 
 Source: `Connections-V13-movies-repair`. Release target: https://cydpixl.github.io/cnx/
