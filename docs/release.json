@@ -1,7 +1,10 @@
 {
-  "version": "19.0.0",
-  "builtAt": "2026-10-13T20:46:47.801Z",
+  "version": "19.1.0",
+  "builtAt": "2026-10-15T07:18:47.132Z",
   "changes": [
+    "CineSrc and MoviesAPI streaming for catalog movies and episodes with per-title progress",
+    "Cinema source settings with explicit reload and opt-in ad-supported sources",
+    "Refined cinema navigation, playback controls and source selection",
     "Rejoin occupied calls and transfer them between signed-in devices using the same session",
     "Atomic call reservations prevent simultaneous dialing from creating duplicate calls",
     "Independent participant heartbeats keep empty and stale calls from appearing active",
