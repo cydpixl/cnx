@@ -1,4 +1,4 @@
-# Connections 19.2 — calls and API playback
+# Connections 19.2.1 — calls and API playback
 
 - Incoming calls show one green Join call button; media controls appear after joining.
 - Calls keep Mic, Camera, Share screen, Apps and Leave visible. More contains the secondary controls.
