@@ -1,6 +1,6 @@
 {
-  "version": "19.3.0",
-  "builtAt": "2026-10-16T00:51:00.625Z",
+  "version": "19.3.1",
+  "builtAt": "2026-10-16T00:58:46.017Z",
   "changes": [
     "Buddy replaced with the new 95-minute 50-second fast-start upload",
     "Floating draggable cinema mini-player preserves the same video iframe and shared playback session while chatting",
