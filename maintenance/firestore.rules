@@ -837,7 +837,7 @@ service cloud.firestore {
           function validMovie() {
             return request.resource.data.keys().hasOnly(['url','title','poster','captionUrl','position','playing','controllerUid','updatedAt','intent'])
               && request.resource.data.url is string
-              && request.resource.data.url.matches('^https://cnx-gh-media[.]pixlcyd[.]workers[.]dev/media/.+[.](mp4|webm|mov|mp3|m4a|wav|ogg|weba)$')
+              && (request.resource.data.url == 'https://pub-d5bf33b40cf244f5af929f9e5a237aa9.r2.dev/Buddy-20261015.mp4' || request.resource.data.url.matches('^https://cnx-gh-media[.]pixlcyd[.]workers[.]dev/media/.+[.](mp4|webm|mov|mp3|m4a|wav|ogg|weba)$'))
               && request.resource.data.title is string && request.resource.data.title.size() <= 120
               && request.resource.data.poster is string && request.resource.data.poster.size() <= 400
               && request.resource.data.captionUrl is string && request.resource.data.captionUrl.size() <= 400
@@ -857,7 +857,7 @@ service cloud.firestore {
         function validWatch() {
           return request.resource.data.keys().hasOnly(['url','title','position','playing','updatedAt','startedBy'])
             && request.resource.data.url is string
-            && request.resource.data.url.matches('^https://cnx-gh-media[.]pixlcyd[.]workers[.]dev/media/.+')
+            && (request.resource.data.url == 'https://pub-d5bf33b40cf244f5af929f9e5a237aa9.r2.dev/Buddy-20261015.mp4' || request.resource.data.url.matches('^https://cnx-gh-media[.]pixlcyd[.]workers[.]dev/media/.+'))
             && request.resource.data.title is string
             && request.resource.data.title.size() <= 100
             && request.resource.data.position is number
@@ -938,7 +938,7 @@ service cloud.firestore {
         allow get,list: if groupMember(group());
         allow create,update: if watchId == 'current' && groupMember(group())
           && request.resource.data.keys().hasOnly(['url','title','poster','captionUrl','position','playing','controllerUid','updatedAt','intent'])
-          && request.resource.data.url is string && request.resource.data.url.matches('^https://cnx-gh-media[.]pixlcyd[.]workers[.]dev/media/.+[.](mp4|webm|mov|mp3|m4a|wav|ogg|weba)$')
+          && request.resource.data.url is string && (request.resource.data.url == 'https://pub-d5bf33b40cf244f5af929f9e5a237aa9.r2.dev/Buddy-20261015.mp4' || request.resource.data.url.matches('^https://cnx-gh-media[.]pixlcyd[.]workers[.]dev/media/.+[.](mp4|webm|mov|mp3|m4a|wav|ogg|weba)$'))
           && request.resource.data.title is string && request.resource.data.title.size() <= 120
           && request.resource.data.poster is string && request.resource.data.poster.size() <= 400
           && request.resource.data.captionUrl is string && request.resource.data.captionUrl.size() <= 400

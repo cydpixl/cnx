@@ -1,7 +1,10 @@
 {
-  "version": "19.2.1",
-  "builtAt": "2026-10-15T12:01:00.383Z",
+  "version": "19.3.0",
+  "builtAt": "2026-10-16T00:51:00.625Z",
   "changes": [
+    "Buddy replaced with the new 95-minute 50-second fast-start upload",
+    "Floating draggable cinema mini-player preserves the same video iframe and shared playback session while chatting",
+    "Refined cinema overlay with compact white controls, source and playback menus, minimize and restore",
     "Single green incoming Join call button; secondary controls under More after joining",
     "CineSrc and MoviesAPI watch-together over the existing encrypted call channel with readiness, seek, pause and clock correction",
     "CineSrc and MoviesAPI streaming for catalog movies and episodes with per-title progress",
