@@ -1,1 +1,0 @@
-window.CONNECTIONS_GIPHY_KEY="cRvlrAtVXFXFg9oeezo6XwUaZtRvbuM7";
